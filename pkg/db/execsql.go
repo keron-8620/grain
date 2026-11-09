@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"emperror.dev/errors"
@@ -14,9 +15,12 @@ func ExecSQLFile(ctx context.Context, db *gorm.DB, filePath string) error {
 	if db == nil {
 		return errors.New("database instance is nil")
 	}
+	if err := contextError(ctx); err != nil {
+		return err
+	}
 
 	// Read SQL file
-	content, readErr := os.ReadFile(filePath) // #nosec G304
+	content, readErr := os.ReadFile(filepath.Clean(filePath)) // #nosec G304
 	if readErr != nil {
 		return errors.WithMessagef(readErr, "failed to read SQL file, path: %s", filePath)
 	}
@@ -32,9 +36,12 @@ func ExecSQLFile(ctx context.Context, db *gorm.DB, filePath string) error {
 			if sql == "" {
 				continue
 			}
+			if err := contextError(ctx); err != nil {
+				return err
+			}
 			// Execute SQL using transaction object to ensure all operations are in the same transaction
 			if execErr := tx.Exec(sql).Error; execErr != nil {
-				return errors.Wrap(execErr, "failed to execute SQL statement")
+				return errors.Wrap(MapError(execErr), "failed to execute SQL statement")
 			}
 		}
 		return nil
@@ -74,14 +81,18 @@ func matchDollarQuote(sql string, i int) (string, bool) {
 	return "", false
 }
 
-// Safe version: only strips comments outside single quotes and dollar quotes ($$...$$ / $tag$...$tag$),
-// without corrupting string content or stored procedure bodies.
-// Correctly handles escaped quotes ('' and \').
+func isQuoteDelimiter(ch byte) bool {
+	return ch == '\'' || ch == '"' || ch == '`'
+}
+
+// Safe version: only strips comments outside quoted strings/identifiers ('...', "...", `...`)
+// and dollar quotes ($$...$$ / $tag$...$tag$), without corrupting string content, identifiers,
+// or stored procedure bodies. Correctly handles escaped quotes (doubled or backslash-escaped).
 func cleanSQLComments(sql string) string {
 	var result strings.Builder
 	n := len(sql)
-	inQuote := false // Whether inside a ' string
-	dollarTag := ""  // Current active PostgreSQL dollar-quote delimiter
+	var quoteChar byte // Current active quote delimiter (' or " or `), 0 when not in quote
+	dollarTag := ""    // Current active PostgreSQL dollar-quote delimiter
 
 	for i := 0; i < n; {
 		// Inside PostgreSQL dollar-quoted string ($$ or $tag$)
@@ -97,26 +108,26 @@ func cleanSQLComments(sql string) string {
 			continue
 		}
 
-		if inQuote {
-			// Escaped backslash or escaped character like \' or \\
+		if quoteChar != 0 {
+			// Escaped backslash or escaped character like \' \" \` or \\
 			if sql[i] == '\\' && i+1 < n {
 				result.WriteByte(sql[i])
 				result.WriteByte(sql[i+1])
 				i += 2
 				continue
 			}
-			// Single quote inside string
-			if sql[i] == '\'' {
-				// Check for SQL standard escaped quote ''
-				if i+1 < n && sql[i+1] == '\'' {
-					result.WriteByte('\'')
-					result.WriteByte('\'')
+			// Matching quote character inside quoted region
+			if sql[i] == quoteChar {
+				// Check for SQL standard doubled quote ('' or "" or ``)
+				if i+1 < n && sql[i+1] == quoteChar {
+					result.WriteByte(quoteChar)
+					result.WriteByte(quoteChar)
 					i += 2
 					continue
 				}
 				// Terminating quote
-				inQuote = false
-				result.WriteByte('\'')
+				result.WriteByte(quoteChar)
+				quoteChar = 0
 				i++
 				continue
 			}
@@ -126,9 +137,9 @@ func cleanSQLComments(sql string) string {
 		}
 
 		// Not in quote
-		if sql[i] == '\'' {
-			inQuote = true
-			result.WriteByte('\'')
+		if isQuoteDelimiter(sql[i]) {
+			quoteChar = sql[i]
+			result.WriteByte(sql[i])
 			i++
 			continue
 		}
@@ -144,11 +155,16 @@ func cleanSQLComments(sql string) string {
 		// Multi-line comment /*
 		if i+1 < n && sql[i] == '/' && sql[i+1] == '*' {
 			// Skip until */
+			closed := false
 			for i += 2; i+1 < n; i++ {
 				if sql[i] == '*' && sql[i+1] == '/' {
 					i += 2
+					closed = true
 					break
 				}
+			}
+			if !closed {
+				i = n
 			}
 			continue
 		}
@@ -176,12 +192,12 @@ func cleanSQLComments(sql string) string {
 	return strings.TrimSpace(result.String())
 }
 
-// splitSQL splits SQL by ;, properly ignoring semicolons inside single quotes and dollar quotes.
+// splitSQL splits SQL by ;, properly ignoring semicolons inside quotes ('...', "...", `...`) and dollar quotes.
 func splitSQL(sql string) []string {
 	var statements []string
 	var current strings.Builder
 	n := len(sql)
-	inQuote := false
+	var quoteChar byte
 	dollarTag := ""
 
 	for i := 0; i < n; {
@@ -198,22 +214,22 @@ func splitSQL(sql string) []string {
 			continue
 		}
 
-		if inQuote {
+		if quoteChar != 0 {
 			if sql[i] == '\\' && i+1 < n {
 				current.WriteByte(sql[i])
 				current.WriteByte(sql[i+1])
 				i += 2
 				continue
 			}
-			if sql[i] == '\'' {
-				if i+1 < n && sql[i+1] == '\'' {
-					current.WriteByte('\'')
-					current.WriteByte('\'')
+			if sql[i] == quoteChar {
+				if i+1 < n && sql[i+1] == quoteChar {
+					current.WriteByte(quoteChar)
+					current.WriteByte(quoteChar)
 					i += 2
 					continue
 				}
-				inQuote = false
-				current.WriteByte('\'')
+				current.WriteByte(quoteChar)
+				quoteChar = 0
 				i++
 				continue
 			}
@@ -223,9 +239,9 @@ func splitSQL(sql string) []string {
 		}
 
 		// Not in quote
-		if sql[i] == '\'' {
-			inQuote = true
-			current.WriteByte('\'')
+		if isQuoteDelimiter(sql[i]) {
+			quoteChar = sql[i]
+			current.WriteByte(sql[i])
 			i++
 			continue
 		}

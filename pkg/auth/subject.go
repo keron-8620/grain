@@ -54,12 +54,12 @@ type Subject struct {
 	// Kind is one of the Kind* constants.
 	Kind string
 	// ID is the numeric identifier within that kind.
-	ID uint32
+	ID uint64
 }
 
 // String renders the subject in its canonical form.
 func (s Subject) String() string {
-	return s.Authority + subjectSeparator + s.Kind + subjectSeparator + strconv.FormatUint(uint64(s.ID), 10)
+	return s.Authority + subjectSeparator + s.Kind + subjectSeparator + strconv.FormatUint(s.ID, 10)
 }
 
 // IsIAM reports whether the subject belongs to the platform authority IAM owns.
@@ -67,7 +67,7 @@ func (s Subject) IsIAM() bool { return s.Authority == AuthorityIAM }
 
 // FormatSubject renders a subject, rejecting a zero ID (which could only ever be a programming
 // error: no row in any of the tables has id 0).
-func FormatSubject(authority, kind string, id uint32) (string, error) {
+func FormatSubject(authority, kind string, id uint64) (string, error) {
 	if strings.TrimSpace(authority) == "" {
 		return "", fmt.Errorf("subject authority must not be empty")
 	}
@@ -98,15 +98,15 @@ func ParseSubject(value string) (Subject, bool) {
 	if parts[0] == "" || parts[1] == "" {
 		return Subject{}, false
 	}
-	id, err := strconv.ParseUint(parts[2], 10, 32)
+	id, err := strconv.ParseUint(parts[2], 10, 64)
 	if err != nil || id == 0 {
 		return Subject{}, false
 	}
-	return Subject{Authority: parts[0], Kind: parts[1], ID: uint32(id)}, true
+	return Subject{Authority: parts[0], Kind: parts[1], ID: id}, true
 }
 
 // ParseSubjectKind parses a subject and requires it to be an IAM subject of the given kind.
-func ParseSubjectKind(value, kind string) (uint32, bool) {
+func ParseSubjectKind(value, kind string) (uint64, bool) {
 	subject, ok := ParseSubject(value)
 	if !ok || !subject.IsIAM() || subject.Kind != kind {
 		return 0, false
@@ -116,39 +116,39 @@ func ParseSubjectKind(value, kind string) (uint32, bool) {
 
 // RoleSubject renders the subject of an IAM role. It is the only supported way to obtain one: a
 // subject built by hand from request input is how a consumer would alias somebody else's role.
-func RoleSubject(roleID uint32) (string, error) {
+func RoleSubject(roleID uint64) (string, error) {
 	return FormatSubject(AuthorityIAM, KindRole, roleID)
 }
 
 // ParseRoleSubject parses "iam:role:<id>".
-func ParseRoleSubject(value string) (uint32, bool) { return ParseSubjectKind(value, KindRole) }
+func ParseRoleSubject(value string) (uint64, bool) { return ParseSubjectKind(value, KindRole) }
 
 // APISubject renders the subject of an IAM API catalog entry.
-func APISubject(apiID uint32) (string, error) {
+func APISubject(apiID uint64) (string, error) {
 	return FormatSubject(AuthorityIAM, KindAPI, apiID)
 }
 
 // ParseAPISubject parses "iam:api:<id>".
-func ParseAPISubject(value string) (uint32, bool) { return ParseSubjectKind(value, KindAPI) }
+func ParseAPISubject(value string) (uint64, bool) { return ParseSubjectKind(value, KindAPI) }
 
 // MenuSubject renders the subject of an IAM menu.
-func MenuSubject(menuID uint32) (string, error) {
+func MenuSubject(menuID uint64) (string, error) {
 	return FormatSubject(AuthorityIAM, KindMenu, menuID)
 }
 
 // ParseMenuSubject parses "iam:menu:<id>".
-func ParseMenuSubject(value string) (uint32, bool) { return ParseSubjectKind(value, KindMenu) }
+func ParseMenuSubject(value string) (uint64, bool) { return ParseSubjectKind(value, KindMenu) }
 
 // ButtonSubject renders the subject of an IAM button.
-func ButtonSubject(buttonID uint32) (string, error) {
+func ButtonSubject(buttonID uint64) (string, error) {
 	return FormatSubject(AuthorityIAM, KindButton, buttonID)
 }
 
 // ParseButtonSubject parses "iam:button:<id>".
-func ParseButtonSubject(value string) (uint32, bool) { return ParseSubjectKind(value, KindButton) }
+func ParseButtonSubject(value string) (uint64, bool) { return ParseSubjectKind(value, KindButton) }
 
-// ApiToSubject converts an API ID to the corresponding Casbin subject.
-func ApiToSubject(pk uint32) string {
+// APIToSubject converts an API ID to the corresponding Casbin subject.
+func APIToSubject(pk uint64) string {
 	subject, err := APISubject(pk)
 	if err != nil {
 		// A zero ID can only come from a programming error upstream; returning the canonical form of
@@ -159,8 +159,13 @@ func ApiToSubject(pk uint32) string {
 	return subject
 }
 
+// ApiToSubject is an alias for APIToSubject for backward compatibility.
+func ApiToSubject(pk uint64) string {
+	return APIToSubject(pk)
+}
+
 // MenuToSubject converts a menu ID to the corresponding Casbin subject.
-func MenuToSubject(pk uint32) string {
+func MenuToSubject(pk uint64) string {
 	subject, err := MenuSubject(pk)
 	if err != nil {
 		return fmt.Sprintf("%s%d", MenuSubjectPrefix, pk)
@@ -169,7 +174,7 @@ func MenuToSubject(pk uint32) string {
 }
 
 // ButtonToSubject converts a button ID to the corresponding Casbin subject.
-func ButtonToSubject(pk uint32) string {
+func ButtonToSubject(pk uint64) string {
 	subject, err := ButtonSubject(pk)
 	if err != nil {
 		return fmt.Sprintf("%s%d", ButtonSubjectPrefix, pk)
@@ -178,7 +183,7 @@ func ButtonToSubject(pk uint32) string {
 }
 
 // RoleToSubject converts a role ID to the corresponding Casbin subject.
-func RoleToSubject(pk uint32) string {
+func RoleToSubject(pk uint64) string {
 	subject, err := RoleSubject(pk)
 	if err != nil {
 		return fmt.Sprintf("%s%d", RoleSubjectPrefix, pk)

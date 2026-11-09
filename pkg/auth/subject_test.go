@@ -30,7 +30,7 @@ func TestSubjectGrammar(t *testing.T) {
 	// Round-trip through the parser, including the kind check.
 	id, ok := ParseRoleSubject(role)
 	require.True(t, ok)
-	assert.Equal(t, uint32(7), id)
+	assert.Equal(t, uint64(7), id)
 
 	parsed, ok := ParseSubject(role)
 	require.True(t, ok)
@@ -40,6 +40,14 @@ func TestSubjectGrammar(t *testing.T) {
 
 	_, ok = ParseAPISubject(role)
 	assert.False(t, ok, "a role subject must not parse as an API subject")
+
+	// 64-bit range round-trip (exceeding uint32 max)
+	bigID := uint64(1) << 40
+	bigRole, err := RoleSubject(bigID)
+	require.NoError(t, err)
+	parsedBigID, ok := ParseRoleSubject(bigRole)
+	require.True(t, ok)
+	assert.Equal(t, bigID, parsedBigID)
 }
 
 // TestSubjectGrammar_RejectsNonSubjects pins what must NOT be treated as a principal: zero ids, other
@@ -88,4 +96,26 @@ func TestFormatSubject_RejectsInvalidInput(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestSubjectHelpersAndParsers(t *testing.T) {
+	menuID, ok := ParseMenuSubject("iam:menu:10")
+	assert.True(t, ok)
+	assert.Equal(t, uint64(10), menuID)
+
+	btnID, ok := ParseButtonSubject("iam:button:20")
+	assert.True(t, ok)
+	assert.Equal(t, uint64(20), btnID)
+
+	assert.Equal(t, "iam:api:100", APIToSubject(100))
+	assert.Equal(t, "iam:api:0", APIToSubject(0))
+
+	assert.Equal(t, "iam:menu:200", MenuToSubject(200))
+	assert.Equal(t, "iam:menu:0", MenuToSubject(0))
+
+	assert.Equal(t, "iam:button:300", ButtonToSubject(300))
+	assert.Equal(t, "iam:button:0", ButtonToSubject(0))
+
+	assert.Equal(t, "iam:role:400", RoleToSubject(400))
+	assert.Equal(t, "iam:role:0", RoleToSubject(0))
 }

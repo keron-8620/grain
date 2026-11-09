@@ -15,27 +15,51 @@ type Error struct {
 	Details  []any   `json:"details,omitempty"`
 	metadata map[string]any
 	cause    error
+	stack    error
 }
 
-func New(code BizCode, message string) *Error {
+func newError(code BizCode, message string, skip int) *Error {
 	if message == "" {
 		message = defaultMsg(code)
 	}
-	return &Error{
+	err := &Error{
 		Code: code,
 		Msg:  message,
 	}
+	// 当为服务端内部系统级错误 (2xxxx) 时，自动捕获堆栈以协助故障排查
+	if code.IsServerError() {
+		err.stack = emperror.WithStackDepth(errors.New(err.Msg), skip+1)
+	}
+	return err
+}
+
+func New(code BizCode, message string) *Error {
+	return newError(code, message, 1)
 }
 
 func Errorf(code BizCode, format string, args ...any) *Error {
-	return New(code, fmt.Sprintf(format, args...))
+	return newError(code, fmt.Sprintf(format, args...), 1)
+}
+
+// NewWithStack 显式构建包含调用栈的 *Error 实例（不论错误码类型）。
+func NewWithStack(code BizCode, message string) *Error {
+	err := newError(code, message, 1)
+	if err.stack == nil {
+		err.stack = emperror.WithStackDepth(errors.New(err.Msg), 1)
+	}
+	return err
+}
+
+// ErrorfWithStack 基于格式化字符串显式构建包含调用栈的 *Error 实例。
+func ErrorfWithStack(code BizCode, format string, args ...any) *Error {
+	return NewWithStack(code, fmt.Sprintf(format, args...))
 }
 
 func Wrap(cause error, code BizCode, message string) *Error {
 	if cause == nil {
 		return nil
 	}
-	err := New(code, message)
+	err := newError(code, message, 1)
 	err.cause = emperror.WithStackIf(cause)
 	return err
 }
@@ -48,14 +72,18 @@ func Clone(err *Error) *Error {
 	if err == nil {
 		return nil
 	}
-	meta := make(map[string]any, len(err.metadata))
-	maps.Copy(meta, err.metadata)
+	var meta map[string]any
+	if len(err.metadata) > 0 {
+		meta = make(map[string]any, len(err.metadata))
+		maps.Copy(meta, err.metadata)
+	}
 	return &Error{
 		Code:     err.Code,
 		Msg:      err.Msg,
 		Details:  append([]any(nil), err.Details...),
 		metadata: meta,
 		cause:    err.cause,
+		stack:    err.stack,
 	}
 }
 
@@ -94,6 +122,9 @@ func (e *Error) WithField(key string, value any) *Error {
 		return nil
 	}
 	err := Clone(e)
+	if err.metadata == nil {
+		err.metadata = make(map[string]any, 1)
+	}
 	err.metadata[key] = value
 	return err
 }
@@ -102,7 +133,13 @@ func (e *Error) WithMetadata(fields map[string]any) *Error {
 	if e == nil {
 		return nil
 	}
+	if len(fields) == 0 {
+		return Clone(e)
+	}
 	err := Clone(e)
+	if err.metadata == nil {
+		err.metadata = make(map[string]any, len(fields))
+	}
 	maps.Copy(err.metadata, fields)
 	return err
 }
@@ -125,8 +162,37 @@ func (e *Error) WithCause(cause error) *Error {
 	return err
 }
 
-func (e *Error) Metadata() map[string]any {
+// WithStack 为当前错误挂载或确保包含调用栈（返回克隆的新实例）。
+// 若存在 cause 则确保底层 cause 包含堆栈；若无 cause 则记录当前位置调用栈。
+func (e *Error) WithStack() *Error {
 	if e == nil {
+		return nil
+	}
+	err := Clone(e)
+	if err.cause != nil {
+		err.cause = emperror.WithStackDepthIf(err.cause, 1)
+	} else if err.stack == nil {
+		err.stack = emperror.WithStackDepth(errors.New(err.Msg), 1)
+	}
+	return err
+}
+
+// Stack 返回当前错误关联的调用栈追踪信息（若无则返回空字符串）。
+func (e *Error) Stack() string {
+	if e == nil {
+		return ""
+	}
+	if e.cause != nil {
+		return fmt.Sprintf("%+v", e.cause)
+	}
+	if e.stack != nil {
+		return fmt.Sprintf("%+v", e.stack)
+	}
+	return ""
+}
+
+func (e *Error) Metadata() map[string]any {
+	if e == nil || len(e.metadata) == 0 {
 		return nil
 	}
 	meta := make(map[string]any, len(e.metadata))
@@ -147,6 +213,8 @@ func (e *Error) Format(s fmt.State, verb rune) {
 			}
 			if e.cause != nil {
 				fmt.Fprintf(s, "%+v", e.cause)
+			} else if e.stack != nil {
+				fmt.Fprintf(s, "%+v", e.stack)
 			}
 			return
 		}
@@ -179,6 +247,10 @@ func (e *Error) LogValue() slog.Value {
 		attrs = append(attrs,
 			slog.String("cause", e.cause.Error()),
 			slog.String("stack", fmt.Sprintf("%+v", e.cause)),
+		)
+	} else if e.stack != nil {
+		attrs = append(attrs,
+			slog.String("stack", fmt.Sprintf("%+v", e.stack)),
 		)
 	}
 	return slog.GroupValue(attrs...)

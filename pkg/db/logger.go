@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -19,7 +21,6 @@ type SlogLoggerConfig struct {
 	IgnoreRecordNotFoundError bool                // When true, ErrRecordNotFound is not logged as an error
 	LogLevel                  gormlogger.LogLevel // GORM log level (Silent, Error, Warn, Info)
 	BaseLogger                *slog.Logger
-	GetLogger                 func(context.Context) *slog.Logger
 }
 
 // SlogLogger implements gormlogger.Interface and gormlogger.ParamsFilter using slog.
@@ -47,14 +48,12 @@ func (l *SlogLogger) Info(ctx context.Context, msg string, data ...any) {
 	if l.Config.LogLevel < gormlogger.Info {
 		return
 	}
-	logger := l.getLogger(ctx)
+	logger := l.getLogger()
 	if !logger.Enabled(ctx, slog.LevelInfo) {
 		return
 	}
-	if len(data) > 0 {
-		msg = fmt.Sprintf(msg, data...)
-	}
-	l.log(ctx, logger, slog.LevelInfo, msg)
+	frame, _ := resolveCaller()
+	l.emit(ctx, logger, slog.LevelInfo, formatMsg(msg, data...), frame, nil)
 }
 
 // Warn logs warning messages.
@@ -62,14 +61,12 @@ func (l *SlogLogger) Warn(ctx context.Context, msg string, data ...any) {
 	if l.Config.LogLevel < gormlogger.Warn {
 		return
 	}
-	logger := l.getLogger(ctx)
+	logger := l.getLogger()
 	if !logger.Enabled(ctx, slog.LevelWarn) {
 		return
 	}
-	if len(data) > 0 {
-		msg = fmt.Sprintf(msg, data...)
-	}
-	l.log(ctx, logger, slog.LevelWarn, msg)
+	frame, _ := resolveCaller()
+	l.emit(ctx, logger, slog.LevelWarn, formatMsg(msg, data...), frame, nil)
 }
 
 // Error logs error messages.
@@ -77,28 +74,79 @@ func (l *SlogLogger) Error(ctx context.Context, msg string, data ...any) {
 	if l.Config.LogLevel < gormlogger.Error {
 		return
 	}
-	logger := l.getLogger(ctx)
+	logger := l.getLogger()
 	if !logger.Enabled(ctx, slog.LevelError) {
 		return
 	}
-	if len(data) > 0 {
-		msg = fmt.Sprintf(msg, data...)
-	}
-	l.log(ctx, logger, slog.LevelError, msg)
+	frame, _ := resolveCaller()
+	l.emit(ctx, logger, slog.LevelError, formatMsg(msg, data...), frame, nil)
 }
 
 // Trace logs SQL execution, duration, rows affected, errors, and slow query alerts.
+// When invoked inside RunDBOp (detected via dbOpTraceState in ctx), error and slow-query
+// alerts are delegated to RunDBOp so only one unified log entry is emitted with SQL context.
 func (l *SlogLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
 	if l.Config.LogLevel <= gormlogger.Silent {
 		return
 	}
 
 	elapsed := time.Since(begin)
-	logger := l.getLogger(ctx)
-	fileLine := utils.FileWithLineNum()
+
+	var opState *dbOpTraceState
+	if ctx != nil {
+		opState, _ = ctx.Value(dbOpTraceKey{}).(*dbOpTraceState)
+	}
+
+	if opState != nil {
+		isRecordNotFound := errors.Is(err, ErrRecordNotFound) || errors.Is(err, gorm.ErrRecordNotFound)
+
+		// Error path: only record into opState; RunDBOp emits the unified log.
+		if err != nil && (!l.Config.IgnoreRecordNotFoundError || !isRecordNotFound) {
+			sql, rows := fc()
+			opState.record(sql, rows, elapsed, true)
+			return
+		}
+
+		// Success path with per-query logging enabled.
+		if err == nil && l.Config.LogLevel >= gormlogger.Info {
+			logger := l.getLogger()
+			if logger.Enabled(ctx, slog.LevelInfo) {
+				frame, fileLine := resolveCaller()
+				sql, rows := fc()
+				opState.record(sql, rows, elapsed, false)
+
+				attrs := []slog.Attr{
+					slog.String("caller", fileLine),
+					slog.Duration("duration", elapsed),
+					slog.String("sql", sql),
+				}
+				if rows != -1 {
+					attrs = append(attrs, slog.Int64("rows", rows))
+				}
+				l.emit(ctx, logger, slog.LevelInfo, "gorm query", frame, attrs)
+				return
+			}
+		}
+
+		// Always record SQL for queries executed inside RunDBOp.
+		// Even if this individual query is below the per-query threshold,
+		// cumulative execution across multiple queries may exceed RunDBOp's threshold.
+		sql, rows := fc()
+		opState.record(sql, rows, elapsed, false)
+		return
+	}
+
+	logger := l.getLogger()
 
 	switch {
-	case err != nil && l.Config.LogLevel >= gormlogger.Error && (!l.Config.IgnoreRecordNotFoundError || !errors.Is(err, gorm.ErrRecordNotFound)):
+	case err != nil &&
+		l.Config.LogLevel >= gormlogger.Error &&
+		(!l.Config.IgnoreRecordNotFoundError || !(errors.Is(err, ErrRecordNotFound) || errors.Is(err, gorm.ErrRecordNotFound))):
+
+		if !logger.Enabled(ctx, slog.LevelError) {
+			return
+		}
+		frame, fileLine := resolveCaller()
 		sql, rows := fc()
 		attrs := []slog.Attr{
 			slog.String("caller", fileLine),
@@ -109,9 +157,16 @@ func (l *SlogLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql 
 		if rows != -1 {
 			attrs = append(attrs, slog.Int64("rows", rows))
 		}
-		l.logWithAttrs(ctx, logger, slog.LevelError, "gorm query error", attrs...)
+		l.emit(ctx, logger, slog.LevelError, "gorm query error", frame, attrs)
 
-	case l.Config.SlowThreshold != 0 && elapsed > l.Config.SlowThreshold && l.Config.LogLevel >= gormlogger.Warn:
+	case l.Config.SlowThreshold != 0 &&
+		elapsed > l.Config.SlowThreshold &&
+		l.Config.LogLevel >= gormlogger.Warn:
+
+		if !logger.Enabled(ctx, slog.LevelWarn) {
+			return
+		}
+		frame, fileLine := resolveCaller()
 		sql, rows := fc()
 		attrs := []slog.Attr{
 			slog.String("caller", fileLine),
@@ -122,12 +177,13 @@ func (l *SlogLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql 
 		if rows != -1 {
 			attrs = append(attrs, slog.Int64("rows", rows))
 		}
-		l.logWithAttrs(ctx, logger, slog.LevelWarn, "gorm slow query", attrs...)
+		l.emit(ctx, logger, slog.LevelWarn, "gorm slow query", frame, attrs)
 
 	case l.Config.LogLevel >= gormlogger.Info:
 		if !logger.Enabled(ctx, slog.LevelInfo) {
 			return
 		}
+		frame, fileLine := resolveCaller()
 		sql, rows := fc()
 		attrs := []slog.Attr{
 			slog.String("caller", fileLine),
@@ -137,7 +193,7 @@ func (l *SlogLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql 
 		if rows != -1 {
 			attrs = append(attrs, slog.Int64("rows", rows))
 		}
-		l.logWithAttrs(ctx, logger, slog.LevelInfo, "gorm query", attrs...)
+		l.emit(ctx, logger, slog.LevelInfo, "gorm query", frame, attrs)
 	}
 }
 
@@ -149,27 +205,54 @@ func (l *SlogLogger) ParamsFilter(ctx context.Context, sql string, params ...any
 	return sql, params
 }
 
-func (l *SlogLogger) getLogger(ctx context.Context) *slog.Logger {
-	if ctx != nil && l.Config.GetLogger != nil {
-		if lg := l.Config.GetLogger(ctx); lg != nil {
-			return lg
-		}
-	}
+func (l *SlogLogger) getLogger() *slog.Logger {
 	if l.Config.BaseLogger != nil {
 		return l.Config.BaseLogger
 	}
 	return slog.Default()
 }
 
-func (l *SlogLogger) log(ctx context.Context, lg *slog.Logger, level slog.Level, msg string) {
-	frame := utils.CallerFrame()
+func (l *SlogLogger) emit(
+	ctx context.Context,
+	lg *slog.Logger,
+	level slog.Level,
+	msg string,
+	frame runtime.Frame,
+	attrs []slog.Attr,
+) {
 	r := slog.NewRecord(time.Now(), level, msg, frame.PC)
+	if len(attrs) > 0 {
+		r.AddAttrs(attrs...)
+	}
 	_ = lg.Handler().Handle(ctx, r)
 }
 
-func (l *SlogLogger) logWithAttrs(ctx context.Context, lg *slog.Logger, level slog.Level, msg string, attrs ...slog.Attr) {
+func formatMsg(msg string, data ...any) string {
+	if len(data) == 0 {
+		return msg
+	}
+	if !strings.Contains(msg, "%") {
+		return msg + " " + fmt.Sprint(data...)
+	}
+	return fmt.Sprintf(msg, data...)
+}
+
+// resolveCaller finds the first frame outside gorm.io and pkg/db helper wrappers (except test files).
+func resolveCaller() (runtime.Frame, string) {
+	var pcs [20]uintptr
+	n := runtime.Callers(3, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		frame, more := frames.Next()
+		file := frame.File
+		if !strings.Contains(file, "gorm.io/") &&
+			!(strings.Contains(file, "pkg/db/") && !strings.HasSuffix(file, "_test.go")) {
+			return frame, fmt.Sprintf("%s:%d", frame.File, frame.Line)
+		}
+		if !more {
+			break
+		}
+	}
 	frame := utils.CallerFrame()
-	r := slog.NewRecord(time.Now(), level, msg, frame.PC)
-	r.AddAttrs(attrs...)
-	_ = lg.Handler().Handle(ctx, r)
+	return frame, utils.FileWithLineNum()
 }

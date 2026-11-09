@@ -151,6 +151,18 @@ func (m *mockRedisServer) handle(conn net.Conn) {
 			} else {
 				_, _ = fmt.Fprintf(conn, "$%d\r\n%s\r\n", len(val), val)
 			}
+		case "EXISTS":
+			m.mu.Lock()
+			count := 0
+			for _, k := range args[1:] {
+				if _, ok := m.data[k]; ok {
+					count++
+				} else if _, ok := m.sets[k]; ok {
+					count++
+				}
+			}
+			m.mu.Unlock()
+			_, _ = fmt.Fprintf(conn, ":%d\r\n", count)
 		case "SET":
 			m.mu.Lock()
 			m.data[args[1]] = args[2]

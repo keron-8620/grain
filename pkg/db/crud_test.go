@@ -102,48 +102,6 @@ func TestContextError(t *testing.T) {
 	})
 }
 
-// -------------------- DBPanic Tests --------------------
-
-func TestDBPanic(t *testing.T) {
-	db := setupTestDBWithLogger(t)
-	ctx := context.Background()
-
-	t.Run("no panic returns original bizErr", func(t *testing.T) {
-		err := DBPanic(ctx, db, nil)
-		assert.NoError(t, err)
-
-		originalErr := errors.New("business failure")
-		err = DBPanic(ctx, db, originalErr)
-		assert.Equal(t, originalErr, err)
-	})
-
-	t.Run("no panic with nil db and ctx", func(t *testing.T) {
-		assert.NoError(t, DBPanic(nil, nil, nil))
-	})
-
-	t.Run("direct defer DBPanic recovers panic with nil db", func(t *testing.T) {
-		assert.NotPanics(t, func() {
-			defer DBPanic(ctx, nil, nil)
-			panic("panic without db")
-		})
-	})
-
-	t.Run("direct defer DBPanic in active transaction recovers and rolls back", func(t *testing.T) {
-		tx := db.Begin()
-		require.NoError(t, tx.Error)
-
-		assert.NotPanics(t, func() {
-			defer DBPanic(ctx, tx, nil)
-			tx.Create(&TestUser{Name: "rollback_user"})
-			panic("simulated transaction failure")
-		})
-
-		var count int64
-		require.NoError(t, db.Model(&TestUser{}).Where("name = ?", "rollback_user").Count(&count).Error)
-		assert.Equal(t, int64(0), count)
-	})
-}
-
 // -------------------- DBRecover Tests --------------------
 
 func TestDBRecover(t *testing.T) {
@@ -156,6 +114,16 @@ func TestDBRecover(t *testing.T) {
 			defer DBRecover(ctx, db, &err)
 		}()
 		assert.NoError(t, err)
+	})
+
+	t.Run("panic with nil db sets err", func(t *testing.T) {
+		var err error
+		assert.NotPanics(t, func() {
+			defer DBRecover(ctx, nil, &err)
+			panic("panic without db")
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "recovered database panic")
 	})
 
 	t.Run("panic sets err and rolls back transaction", func(t *testing.T) {
@@ -191,6 +159,12 @@ func TestWithTransaction(t *testing.T) {
 		assert.Contains(t, err.Error(), "database instance is nil")
 	})
 
+	t.Run("nil fn returns error", func(t *testing.T) {
+		err := WithTransaction(context.Background(), db, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "transaction function is nil")
+	})
+
 	t.Run("nil context defaults to background", func(t *testing.T) {
 		//nolint:staticcheck // testing explicit nil ctx behavior
 		err := withTransaction(nil, db, func(tx *gorm.DB) error {
@@ -214,16 +188,18 @@ func TestWithTransaction(t *testing.T) {
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
-	t.Run("panic inside fn is recovered and rolled back", func(t *testing.T) {
-		err := withTransaction(context.Background(), db, func(tx *gorm.DB) error {
+	t.Run("panic inside fn is recovered and rolled back using inner tx", func(t *testing.T) {
+		dbWithLog := setupTestDBWithLogger(t)
+		err := withTransaction(context.Background(), dbWithLog, func(tx *gorm.DB) error {
 			tx.Create(&TestUser{Name: "panic_rollback_user"})
+			tx.Statement.SQL.WriteString("INSERT INTO test_users")
 			panic("boom")
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "database transaction panicked")
 
 		var count int64
-		require.NoError(t, db.Model(&TestUser{}).Where("name = ?", "panic_rollback_user").Count(&count).Error)
+		require.NoError(t, dbWithLog.Model(&TestUser{}).Where("name = ?", "panic_rollback_user").Count(&count).Error)
 		assert.Equal(t, int64(0), count)
 	})
 
@@ -352,6 +328,32 @@ func TestDBCreateRelationTx(t *testing.T) {
 		assert.Len(t, fetched.Roles, 2)
 	})
 
+	t.Run("avoids duplicate association creation when struct field is pre-populated", func(t *testing.T) {
+		role1 := TestRole{Name: "role_pre_1"}
+		role2 := TestRole{Name: "role_pre_2"}
+		require.NoError(t, db.Create(&role1).Error)
+		require.NoError(t, db.Create(&role2).Error)
+
+		user := &TestUser{
+			Name:  "prepopulated_user",
+			Email: "prepopulated@example.com",
+			Age:   26,
+			Roles: []TestRole{role1, role2},
+		}
+		upmap := map[string]any{
+			"Roles": []TestRole{role1, role2},
+		}
+
+		err := DBCreateRelationTx(ctx, db, &TestUser{}, user, upmap)
+		require.NoError(t, err)
+		assert.NotZero(t, user.ID)
+
+		var fetched TestUser
+		err = db.Preload("Roles").First(&fetched, user.ID).Error
+		require.NoError(t, err)
+		assert.Len(t, fetched.Roles, 2)
+	})
+
 	t.Run("empty relation map succeeds", func(t *testing.T) {
 		user := &TestUser{Name: "david", Email: "david@example.com", Age: 22}
 		err := DBCreateRelationTx(ctx, db, &TestUser{}, user, map[string]any{})
@@ -398,8 +400,9 @@ func TestDBUpdate(t *testing.T) {
 		user := &TestUser{Name: "update_user", Email: "update@example.com", Age: 20}
 		require.NoError(t, db.Create(user).Error)
 
-		err := DBUpdate(ctx, db, &TestUser{}, map[string]any{"age": 21, "name": "updated_name"}, "id = ?", user.ID)
+		rows, err := DBUpdate(ctx, db, &TestUser{}, map[string]any{"age": 21, "name": "updated_name"}, "id = ?", user.ID)
 		require.NoError(t, err)
+		assert.Equal(t, int64(1), rows)
 
 		var updated TestUser
 		require.NoError(t, db.First(&updated, user.ID).Error)
@@ -408,13 +411,15 @@ func TestDBUpdate(t *testing.T) {
 	})
 
 	t.Run("empty data map is a no-op", func(t *testing.T) {
-		err := DBUpdate(ctx, db, &TestUser{}, map[string]any{}, "id = ?", 1)
+		rows, err := DBUpdate(ctx, db, &TestUser{}, map[string]any{}, "id = ?", 1)
 		assert.NoError(t, err)
+		assert.Equal(t, int64(0), rows)
 	})
 
 	t.Run("missing where clause returns error", func(t *testing.T) {
-		err := DBUpdate(ctx, db, &TestUser{}, map[string]any{"age": 30})
+		rows, err := DBUpdate(ctx, db, &TestUser{}, map[string]any{"age": 30})
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.ErrorIs(t, err, gorm.ErrMissingWhereClause)
 	})
 
@@ -422,8 +427,9 @@ func TestDBUpdate(t *testing.T) {
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := DBUpdate(canceledCtx, db, &TestUser{}, map[string]any{"age": 30}, "id = ?", 1)
+		rows, err := DBUpdate(canceledCtx, db, &TestUser{}, map[string]any{"age": 30}, "id = ?", 1)
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -431,8 +437,9 @@ func TestDBUpdate(t *testing.T) {
 		type NonExistent struct {
 			ID uint `gorm:"primaryKey"`
 		}
-		err := DBUpdate(ctx, db, &NonExistent{}, map[string]any{"id": 2}, "id = ?", 1)
+		rows, err := DBUpdate(ctx, db, &NonExistent{}, map[string]any{"id": 2}, "id = ?", 1)
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.Contains(t, err.Error(), "failed to update database record")
 	})
 }
@@ -447,8 +454,9 @@ func TestDBUpdateTx(t *testing.T) {
 		user := &TestUser{Name: "update_tx_user", Email: "tx@example.com", Age: 25}
 		require.NoError(t, db.Create(user).Error)
 
-		err := DBUpdateTx(ctx, db, &TestUser{}, map[string]any{"age": 26}, "id = ?", user.ID)
+		rows, err := DBUpdateTx(ctx, db, &TestUser{}, map[string]any{"age": 26}, "id = ?", user.ID)
 		require.NoError(t, err)
+		assert.Equal(t, int64(1), rows)
 
 		var updated TestUser
 		require.NoError(t, db.First(&updated, user.ID).Error)
@@ -456,13 +464,15 @@ func TestDBUpdateTx(t *testing.T) {
 	})
 
 	t.Run("empty data map is a no-op", func(t *testing.T) {
-		err := DBUpdateTx(ctx, db, &TestUser{}, map[string]any{}, "id = ?", 1)
+		rows, err := DBUpdateTx(ctx, db, &TestUser{}, map[string]any{}, "id = ?", 1)
 		assert.NoError(t, err)
+		assert.Equal(t, int64(0), rows)
 	})
 
 	t.Run("missing where clause returns error", func(t *testing.T) {
-		err := DBUpdateTx(ctx, db, &TestUser{}, map[string]any{"age": 30})
+		rows, err := DBUpdateTx(ctx, db, &TestUser{}, map[string]any{"age": 30})
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.ErrorIs(t, err, gorm.ErrMissingWhereClause)
 	})
 
@@ -470,8 +480,9 @@ func TestDBUpdateTx(t *testing.T) {
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := DBUpdateTx(canceledCtx, db, &TestUser{}, map[string]any{"age": 30}, "id = ?", 1)
+		rows, err := DBUpdateTx(canceledCtx, db, &TestUser{}, map[string]any{"age": 30}, "id = ?", 1)
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -479,8 +490,9 @@ func TestDBUpdateTx(t *testing.T) {
 		type NonExistent struct {
 			ID uint `gorm:"primaryKey"`
 		}
-		err := DBUpdateTx(ctx, db, &NonExistent{}, map[string]any{"id": 2}, "id = ?", 1)
+		rows, err := DBUpdateTx(ctx, db, &NonExistent{}, map[string]any{"id": 2}, "id = ?", 1)
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.Contains(t, err.Error(), "failed to update database record")
 	})
 }
@@ -569,7 +581,34 @@ func TestDBUpdateRelationTx(t *testing.T) {
 		}
 		err := DBUpdateRelationTx(ctx, db, &NonExistent{}, map[string]any{"id": 1}, nil, "id = ?", 1)
 		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to query record")
+	})
+
+	t.Run("failure on invalid update data", func(t *testing.T) {
+		user := &TestUser{Name: "err_update_user"}
+		require.NoError(t, db.Create(user).Error)
+
+		err := DBUpdateRelationTx(ctx, db, &TestUser{}, map[string]any{"non_existent_column": 1}, nil, "id = ?", user.ID)
+		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to update database record")
+	})
+
+	t.Run("update condition column succeeds with relation replacement", func(t *testing.T) {
+		role := TestRole{Name: "r_cond"}
+		require.NoError(t, db.Create(&role).Error)
+
+		user := &TestUser{Name: "old_cond_name", Age: 20}
+		require.NoError(t, db.Create(user).Error)
+
+		data := map[string]any{"name": "new_cond_name"}
+		upmap := map[string]any{"Roles": []TestRole{role}}
+		err := DBUpdateRelationTx(ctx, db, &TestUser{}, data, upmap, "name = ?", "old_cond_name")
+		require.NoError(t, err)
+
+		var fetched TestUser
+		require.NoError(t, db.Preload("Roles").First(&fetched, user.ID).Error)
+		assert.Equal(t, "new_cond_name", fetched.Name)
+		require.Len(t, fetched.Roles, 1)
 	})
 }
 
@@ -580,8 +619,9 @@ func TestDBDeleteTx(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("missing where clause returns error", func(t *testing.T) {
-		err := DBDeleteTx(ctx, db, &TestUser{})
+		rows, err := DBDeleteTx(ctx, db, &TestUser{})
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.ErrorIs(t, err, gorm.ErrMissingWhereClause)
 	})
 
@@ -589,8 +629,9 @@ func TestDBDeleteTx(t *testing.T) {
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := DBDeleteTx(canceledCtx, db, &TestUser{}, "id = ?", 1)
+		rows, err := DBDeleteTx(canceledCtx, db, &TestUser{}, "id = ?", 1)
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -598,8 +639,9 @@ func TestDBDeleteTx(t *testing.T) {
 		user := &TestUser{Name: "delete_user"}
 		require.NoError(t, db.Create(user).Error)
 
-		err := DBDeleteTx(ctx, db, &TestUser{}, "id = ?", user.ID)
+		rows, err := DBDeleteTx(ctx, db, &TestUser{}, "id = ?", user.ID)
 		require.NoError(t, err)
+		assert.Equal(t, int64(1), rows)
 
 		var count int64
 		require.NoError(t, db.Model(&TestUser{}).Where("id = ?", user.ID).Count(&count).Error)
@@ -610,8 +652,9 @@ func TestDBDeleteTx(t *testing.T) {
 		type NonExistent struct {
 			ID uint `gorm:"primaryKey"`
 		}
-		err := DBDeleteTx(ctx, db, &NonExistent{}, "id = ?", 1)
+		rows, err := DBDeleteTx(ctx, db, &NonExistent{}, "id = ?", 1)
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.Contains(t, err.Error(), "failed to delete database record")
 	})
 }
@@ -623,8 +666,9 @@ func TestDBDelete(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("missing where clause returns error", func(t *testing.T) {
-		err := DBDelete(ctx, db, &TestUser{})
+		rows, err := DBDelete(ctx, db, &TestUser{})
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.ErrorIs(t, err, gorm.ErrMissingWhereClause)
 	})
 
@@ -632,8 +676,9 @@ func TestDBDelete(t *testing.T) {
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := DBDelete(canceledCtx, db, &TestUser{}, "id = ?", 1)
+		rows, err := DBDelete(canceledCtx, db, &TestUser{}, "id = ?", 1)
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -641,8 +686,9 @@ func TestDBDelete(t *testing.T) {
 		user := &TestUser{Name: "delete_user_plain"}
 		require.NoError(t, db.Create(user).Error)
 
-		err := DBDelete(ctx, db, &TestUser{}, "id = ?", user.ID)
+		rows, err := DBDelete(ctx, db, &TestUser{}, "id = ?", user.ID)
 		require.NoError(t, err)
+		assert.Equal(t, int64(1), rows)
 
 		var count int64
 		require.NoError(t, db.Model(&TestUser{}).Where("id = ?", user.ID).Count(&count).Error)
@@ -653,15 +699,16 @@ func TestDBDelete(t *testing.T) {
 		type NonExistent struct {
 			ID uint `gorm:"primaryKey"`
 		}
-		err := DBDelete(ctx, db, &NonExistent{}, "id = ?", 1)
+		rows, err := DBDelete(ctx, db, &NonExistent{}, "id = ?", 1)
 		require.Error(t, err)
+		assert.Equal(t, int64(0), rows)
 		assert.Contains(t, err.Error(), "failed to delete database record")
 	})
 }
 
 // -------------------- DBGet Tests --------------------
 
-func TestDBGet(t *testing.T) {
+func TestDBFindOne(t *testing.T) {
 	db := setupTestDB(t)
 	ctx := context.Background()
 
@@ -670,7 +717,7 @@ func TestDBGet(t *testing.T) {
 		require.NoError(t, db.Create(user).Error)
 
 		var fetched TestUser
-		err := DBGet(ctx, db, nil, &fetched, "id = ?", user.ID)
+		err := DBFindOne(ctx, db, &fetched, nil, "id = ?", user.ID)
 		require.NoError(t, err)
 		assert.Equal(t, "get_user", fetched.Name)
 		assert.Equal(t, 33, fetched.Age)
@@ -685,7 +732,7 @@ func TestDBGet(t *testing.T) {
 		require.NoError(t, db.Model(user).Association("Roles").Append(&role))
 
 		var fetched TestUser
-		err := DBGet(ctx, db, []string{"Roles"}, &fetched, "id = ?", user.ID)
+		err := DBFindOne(ctx, db, &fetched, []string{"Roles"}, "id = ?", user.ID)
 		require.NoError(t, err)
 		assert.Len(t, fetched.Roles, 1)
 		assert.Equal(t, "get_role", fetched.Roles[0].Name)
@@ -693,7 +740,7 @@ func TestDBGet(t *testing.T) {
 
 	t.Run("record not found returns error", func(t *testing.T) {
 		var fetched TestUser
-		err := DBGet(ctx, db, nil, &fetched, "id = ?", 999999)
+		err := DBFindOne(ctx, db, &fetched, nil, "id = ?", 999999)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to query database record")
 	})
@@ -703,7 +750,7 @@ func TestDBGet(t *testing.T) {
 		cancel()
 
 		var fetched TestUser
-		err := DBGet(canceledCtx, db, nil, &fetched, "id = ?", 1)
+		err := DBFindOne(canceledCtx, db, &fetched, nil, "id = ?", 1)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -726,7 +773,9 @@ func TestDBList(t *testing.T) {
 	t.Run("query with conditions and sorting", func(t *testing.T) {
 		var users []TestUser
 		query := QueryParams{
-			Query:   map[string]any{"name": "user_03"},
+			Filters: []ListFilter{
+				{Field: "name", Op: ListFilterEquals, Value: "user_03"},
+			},
 			OrderBy: []string{"age DESC"},
 		}
 		err := DBList(ctx, db, &TestUser{}, &users, query)
@@ -790,7 +839,9 @@ func TestDBList(t *testing.T) {
 
 		var users []TestUser
 		query := QueryParams{
-			Query:    map[string]any{"id": firstUser.ID},
+			Filters: []ListFilter{
+				{Field: "id", Op: ListFilterEquals, Value: firstUser.ID},
+			},
 			Preloads: []string{"Roles"},
 		}
 		err := DBList(ctx, db, &TestUser{}, &users, query)
@@ -812,6 +863,38 @@ func TestDBList(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, users, 1)
 		assert.Equal(t, "user_03", users[0].Name)
+	})
+
+	t.Run("query with leading minus order normalizes to descending", func(t *testing.T) {
+		var users []TestUser
+		query := QueryParams{
+			OrderBy: []string{"-age"},
+			Limit:   2,
+		}
+		err := DBList(ctx, db, &TestUser{}, &users, query)
+		require.NoError(t, err)
+		require.Len(t, users, 2)
+		assert.True(t, users[0].Age > users[1].Age)
+	})
+
+	t.Run("query with invalid columns returns error", func(t *testing.T) {
+		var users []TestUser
+		query := QueryParams{
+			Columns: []string{"name; DROP TABLE users;--"},
+		}
+		err := DBList(ctx, db, &TestUser{}, &users, query)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+	})
+
+	t.Run("query with invalid omit returns error", func(t *testing.T) {
+		var users []TestUser
+		query := QueryParams{
+			Omit: []string{"name; DROP TABLE users;--"},
+		}
+		err := DBList(ctx, db, &TestUser{}, &users, query)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
 	})
 
 	t.Run("query with invalid order returns error", func(t *testing.T) {
@@ -858,29 +941,48 @@ func TestDBCount(t *testing.T) {
 		}).Error)
 	}
 
-	t.Run("count with condition", func(t *testing.T) {
-		count, err := DBCount(ctx, db, &TestUser{}, map[string]any{"name": "count_user"})
+	t.Run("count with single filter", func(t *testing.T) {
+		count, err := DBCount(ctx, db, &TestUser{}, QueryParams{
+			Filters: []ListFilter{
+				{Field: "name", Op: ListFilterEquals, Value: "count_user"},
+			},
+		})
 		require.NoError(t, err)
 		assert.Equal(t, int64(5), count)
 	})
 
-	t.Run("count with empty query map", func(t *testing.T) {
-		count, err := DBCount(ctx, db, &TestUser{}, map[string]any{})
+	t.Run("count with multiple filters", func(t *testing.T) {
+		count, err := DBCount(ctx, db, &TestUser{}, QueryParams{
+			Filters: []ListFilter{
+				{Field: "name", Op: ListFilterEquals, Value: "count_user"},
+				{Field: "age", Op: ListFilterGreaterEquals, Value: 23},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int64(3), count) // 23, 24, 25
+	})
+
+	t.Run("count with empty query params", func(t *testing.T) {
+		count, err := DBCount(ctx, db, &TestUser{}, QueryParams{})
 		require.NoError(t, err)
 		assert.Equal(t, int64(5), count)
 	})
 
-	t.Run("count with empty string key is ignored", func(t *testing.T) {
-		count, err := DBCount(ctx, db, &TestUser{}, map[string]any{"": "ignored_value"})
-		require.NoError(t, err)
-		assert.Equal(t, int64(5), count)
+	t.Run("count with invalid filter returns error", func(t *testing.T) {
+		_, err := DBCount(ctx, db, &TestUser{}, QueryParams{
+			Filters: []ListFilter{
+				{Field: "name; DROP TABLE users;--", Op: ListFilterEquals, Value: "x"},
+			},
+		})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
 	})
 
 	t.Run("context canceled returns error", func(t *testing.T) {
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := DBCount(canceledCtx, db, &TestUser{}, nil)
+		_, err := DBCount(canceledCtx, db, &TestUser{}, QueryParams{})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -889,35 +991,9 @@ func TestDBCount(t *testing.T) {
 		type NonExistent struct {
 			ID uint `gorm:"primaryKey"`
 		}
-		_, err := DBCount(ctx, db, &NonExistent{}, nil)
+		_, err := DBCount(ctx, db, &NonExistent{}, QueryParams{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to count database records")
-	})
-}
-
-// -------------------- DBCountWithParams Tests --------------------
-
-func TestDBCountWithParams(t *testing.T) {
-	db := setupTestDB(t)
-	ctx := context.Background()
-
-	for i := 1; i <= 5; i++ {
-		require.NoError(t, db.Create(&TestUser{
-			Name: "count_param_user",
-			Age:  20 + i,
-		}).Error)
-	}
-
-	t.Run("count with both Query and Filters", func(t *testing.T) {
-		query := QueryParams{
-			Query: map[string]any{"name": "count_param_user"},
-			Filters: []ListFilter{
-				{Field: "age", Op: ListFilterGreaterEquals, Value: 23},
-			},
-		}
-		count, err := DBCountWithParams(ctx, db, &TestUser{}, query)
-		require.NoError(t, err)
-		assert.Equal(t, int64(3), count) // 23, 24, 25
 	})
 }
 
@@ -979,12 +1055,15 @@ func TestQueryParams_LogValue(t *testing.T) {
 	t.Run("non-nil receiver returns group value", func(t *testing.T) {
 		qp := &QueryParams{
 			Preloads: []string{"Roles", "Profile"},
-			Query:    map[string]any{"name": "tester", "age": 30},
-			OrderBy:  []string{"created_at DESC", "id ASC"},
-			Limit:    20,
-			Offset:   10,
-			Omit:     []string{"password"},
-			Columns:  []string{"id", "name", "email"},
+			Filters: []ListFilter{
+				{Field: "name", Op: ListFilterEquals, Value: "tester"},
+				{Field: "age", Op: ListFilterGreaterEquals, Value: 30},
+			},
+			OrderBy: []string{"created_at DESC", "id ASC"},
+			Limit:   20,
+			Offset:  10,
+			Omit:    []string{"password"},
+			Columns: []string{"id", "name", "email"},
 		}
 
 		val := qp.LogValue()
@@ -997,13 +1076,13 @@ func TestQueryParams_LogValue(t *testing.T) {
 		}
 
 		assert.Equal(t, "Roles,Profile", attrMap["preloads"].String())
+		assert.Equal(t, "name = tester; age >= 30", attrMap["filters"].String())
 		assert.Equal(t, "created_at DESC,id ASC", attrMap["order_by"].String())
 		assert.Equal(t, int64(20), attrMap["limit"].Int64())
 		assert.Equal(t, int64(10), attrMap["offset"].Int64())
 		assert.Equal(t, "password", attrMap["omit"].String())
 		assert.Equal(t, "id,name,email", attrMap["columns"].String())
-		assert.NotNil(t, attrMap["query"].Any())
-		assert.Contains(t, attrMap, "filters")
+		assert.NotContains(t, attrMap, "query")
 	})
 
 	t.Run("struct with filters returns group value", func(t *testing.T) {
@@ -1028,9 +1107,9 @@ func TestQueryParams_LogValue(t *testing.T) {
 func TestModelLogAttr(t *testing.T) {
 	t.Run("BaseModel LogAttr", func(t *testing.T) {
 		base := BaseModel{ID: 101}
-		attr := base.LogAttr()
+		attr := base.LogAttr()[0]
 		assert.Equal(t, "id", attr.Key)
-		assert.Equal(t, int64(101), attr.Value.Int64())
+		assert.Equal(t, uint64(101), attr.Value.Uint64())
 	})
 
 	t.Run("StandardModel LogAttr", func(t *testing.T) {
@@ -1043,67 +1122,309 @@ func TestModelLogAttr(t *testing.T) {
 		attrs := std.LogAttr()
 		require.Len(t, attrs, 3)
 		assert.Equal(t, "id", attrs[0].Key)
-		assert.Equal(t, int64(202), attrs[0].Value.Int64())
+		assert.Equal(t, uint64(202), attrs[0].Value.Uint64())
 		assert.Equal(t, "created_at", attrs[1].Key)
 		assert.Equal(t, now.Format(time.DateTime), attrs[1].Value.String())
 		assert.Equal(t, "updated_at", attrs[2].Key)
 		assert.Equal(t, now.Format(time.DateTime), attrs[2].Value.String())
 	})
 
-	t.Run("BigBaseModel LogAttr", func(t *testing.T) {
-		big := BigBaseModel{ID: 5000000000}
-		attr := big.LogAttr()
-		assert.Equal(t, "id", attr.Key)
-		assert.Equal(t, uint64(5000000000), attr.Value.Uint64())
-	})
-
-	t.Run("StandardModel64 LogAttr", func(t *testing.T) {
+	t.Run("SoftDeleteModel LogAttr", func(t *testing.T) {
 		now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
-		std := StandardModel64{
-			BigBaseModel: BigBaseModel{ID: 8000000000},
-			CreatedAt:    now,
-			UpdatedAt:    now,
+		delTime := time.Date(2026, 9, 14, 13, 0, 0, 0, time.UTC)
+
+		// Un-deleted
+		active := SoftDeleteModel{
+			StandardModel: StandardModel{
+				BaseModel: BaseModel{ID: 301},
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
 		}
-		attrs := std.LogAttr()
-		require.Len(t, attrs, 3)
-		assert.Equal(t, "id", attrs[0].Key)
-		assert.Equal(t, uint64(8000000000), attrs[0].Value.Uint64())
-		assert.Equal(t, "created_at", attrs[1].Key)
-		assert.Equal(t, now.Format(time.DateTime), attrs[1].Value.String())
-		assert.Equal(t, "updated_at", attrs[2].Key)
-		assert.Equal(t, now.Format(time.DateTime), attrs[2].Value.String())
+		activeAttrs := active.LogAttr()
+		require.Len(t, activeAttrs, 3)
+		assert.Equal(t, uint64(301), activeAttrs[0].Value.Uint64())
+
+		// Soft-deleted
+		deleted := SoftDeleteModel{
+			StandardModel: StandardModel{
+				BaseModel: BaseModel{ID: 302},
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+			DeletedAt: gorm.DeletedAt{Time: delTime, Valid: true},
+		}
+		delAttrs := deleted.LogAttr()
+		require.Len(t, delAttrs, 4)
+		assert.Equal(t, "deleted_at", delAttrs[3].Key)
+		assert.Equal(t, delTime.Format(time.DateTime), delAttrs[3].Value.String())
 	})
 }
 
 // -------------------- JoinUint Tests --------------------
 
-func TestJoinUint32_And_JoinUint64(t *testing.T) {
-	t.Run("JoinUint32 empty", func(t *testing.T) {
-		assert.Equal(t, "", JoinUint32(nil, ","))
-		assert.Equal(t, "", JoinUint32([]uint32{}, ","))
-	})
-
-	t.Run("JoinUint32 single", func(t *testing.T) {
-		assert.Equal(t, "42", JoinUint32([]uint32{42}, ","))
-	})
-
-	t.Run("JoinUint32 multiple with max uint32", func(t *testing.T) {
-		nums := []uint32{1, 4294967295, 100}
-		assert.Equal(t, "1,4294967295,100", JoinUint32(nums, ","))
-		assert.Equal(t, "1 - 4294967295 - 100", JoinUint32(nums, " - "))
-	})
-
+func TestJoinUint64_And_JoinUint64(t *testing.T) {
 	t.Run("JoinUint64 empty", func(t *testing.T) {
 		assert.Equal(t, "", JoinUint64(nil, ","))
 		assert.Equal(t, "", JoinUint64([]uint64{}, ","))
 	})
 
 	t.Run("JoinUint64 single", func(t *testing.T) {
-		assert.Equal(t, "18446744073709551615", JoinUint64([]uint64{18446744073709551615}, ","))
+		assert.Equal(t, "42", JoinUint64([]uint64{42}, ","))
 	})
 
-	t.Run("JoinUint64 multiple", func(t *testing.T) {
-		nums := []uint64{1, 5000000000, 18446744073709551615}
-		assert.Equal(t, "1,5000000000,18446744073709551615", JoinUint64(nums, ","))
+	t.Run("JoinUint64 multiple with max uint64", func(t *testing.T) {
+		nums := []uint64{1, 4294967295, 100}
+		assert.Equal(t, "1,4294967295,100", JoinUint64(nums, ","))
+		assert.Equal(t, "1 - 4294967295 - 100", JoinUint64(nums, " - "))
 	})
+
+}
+
+func TestMapTo_And_MapToUint64s(t *testing.T) {
+	type item struct {
+		id   uint64
+		name string
+	}
+	items := []item{
+		{id: 10, name: "ten"},
+		{id: 20, name: "twenty"},
+		{id: 30, name: "thirty"},
+	}
+
+	t.Run("MapTo generic", func(t *testing.T) {
+		names := MapTo(items, func(i item) string { return i.name })
+		assert.Equal(t, []string{"ten", "twenty", "thirty"}, names)
+	})
+
+	t.Run("MapToUint64s", func(t *testing.T) {
+		ids := MapToUint64s(items, func(i item) uint64 { return i.id })
+		assert.Equal(t, []uint64{10, 20, 30}, ids)
+
+		empty := MapToUint64s([]item{}, func(i item) uint64 { return i.id })
+		assert.Empty(t, empty)
+	})
+}
+
+func TestWithTransaction_NestedSavepointPanic(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	// Outer transaction creates a user, inner nested transaction panics.
+	// Because WithTransaction does not issue a duplicate full Rollback(),
+	// only the inner savepoint is rolled back and the outer transaction can still commit!
+	err := WithTransaction(ctx, db, func(outerTx *gorm.DB) error {
+		if err := outerTx.Create(&TestUser{Name: "outer_survives"}).Error; err != nil {
+			return err
+		}
+
+		innerErr := WithTransaction(ctx, outerTx, func(innerTx *gorm.DB) error {
+			_ = innerTx.Create(&TestUser{Name: "inner_panics"}).Error
+			panic("inner savepoint panic")
+		})
+		require.Error(t, innerErr)
+		assert.Contains(t, innerErr.Error(), "database transaction panicked")
+
+		// Outer transaction continues and commits
+		return nil
+	})
+	require.NoError(t, err)
+
+	var outerCount, innerCount int64
+	require.NoError(t, db.Model(&TestUser{}).Where("name = ?", "outer_survives").Count(&outerCount).Error)
+	require.NoError(t, db.Model(&TestUser{}).Where("name = ?", "inner_panics").Count(&innerCount).Error)
+	assert.Equal(t, int64(1), outerCount, "outer transaction record should survive inner savepoint panic")
+	assert.Equal(t, int64(0), innerCount, "inner savepoint record should be rolled back")
+}
+
+func TestDBUpdateRelationTx_InputValidation(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	t.Run("nil db returns error", func(t *testing.T) {
+		err := DBUpdateRelationTx(ctx, nil, &TestUser{}, map[string]any{"name": "x"}, nil, "id = ?", 1)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "database instance is nil")
+	})
+
+	t.Run("nil model returns error", func(t *testing.T) {
+		err := DBUpdateRelationTx(ctx, db, nil, map[string]any{"name": "x"}, nil, "id = ?", 1)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "model instance cannot be nil")
+	})
+
+	t.Run("canceled context returns error", func(t *testing.T) {
+		canceledCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		err := DBUpdateRelationTx(canceledCtx, db, &TestUser{}, map[string]any{"name": "x"}, nil, "id = ?", 1)
+		require.ErrorIs(t, err, context.Canceled)
+	})
+}
+
+func TestDBFind_And_DBFindOne(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	role := TestRole{Name: "admin_role"}
+	require.NoError(t, db.Create(&role).Error)
+	user := TestUser{Name: "find_target", Email: "find@example.com", Age: 28, Roles: []TestRole{role}}
+	require.NoError(t, db.Create(&user).Error)
+
+	t.Run("DBFind without preloads", func(t *testing.T) {
+		var got TestUser
+		err := DBFind(ctx, db, &got, "name = ?", "find_target")
+		require.NoError(t, err)
+		assert.Equal(t, "find@example.com", got.Email)
+		assert.Empty(t, got.Roles)
+	})
+
+	t.Run("DBFindOne with preloads", func(t *testing.T) {
+		var got TestUser
+		err := DBFindOne(ctx, db, &got, []string{"Roles"}, "name = ?", "find_target")
+		require.NoError(t, err)
+		assert.Equal(t, "find@example.com", got.Email)
+		require.Len(t, got.Roles, 1)
+		assert.Equal(t, "admin_role", got.Roles[0].Name)
+	})
+}
+
+func TestBuildQuery_AllowedOrderColumns(t *testing.T) {
+	db := setupTestDB(t)
+	allowed := NewColumnSet("id", "name", "age")
+
+	t.Run("allowed order column succeeds", func(t *testing.T) {
+		qp := QueryParams{
+			OrderBy:             []string{"-age", "name asc"},
+			AllowedOrderColumns: allowed,
+		}
+		q, err := BuildQuery(db, &TestUser{}, qp)
+		require.NoError(t, err)
+		assert.NotNil(t, q)
+	})
+
+	t.Run("disallowed order column fails with ErrInvalidListOption", func(t *testing.T) {
+		qp := QueryParams{
+			OrderBy:             []string{"email desc"},
+			AllowedOrderColumns: allowed,
+		}
+		_, err := BuildQuery(db, &TestUser{}, qp)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+		assert.Contains(t, err.Error(), "not sortable")
+	})
+}
+
+func TestBuildQuery_FilterAllowlistAndMapping(t *testing.T) {
+	db := setupTestDB(t)
+
+	t.Run("AllowedFilterColumns permits allowed column and rejects others", func(t *testing.T) {
+		allowed := NewColumnSet("name", "age")
+		qpOK := QueryParams{
+			Filters:              []ListFilter{{Field: "name", Op: ListFilterEquals, Value: "alice"}},
+			AllowedFilterColumns: allowed,
+		}
+		q, err := BuildQuery(db, &TestUser{}, qpOK)
+		require.NoError(t, err)
+		assert.NotNil(t, q)
+
+		qpBad := QueryParams{
+			Filters:              []ListFilter{{Field: "email", Op: ListFilterEquals, Value: "alice@example.com"}},
+			AllowedFilterColumns: allowed,
+		}
+		_, err = BuildQuery(db, &TestUser{}, qpBad)
+		require.ErrorIs(t, err, ErrInvalidListOption)
+		assert.Contains(t, err.Error(), "not filterable")
+	})
+
+	t.Run("FilterColumnMap maps field to column and rejects undeclared fields", func(t *testing.T) {
+		colMap := map[string]string{
+			"user_name": "name",
+		}
+		qpOK := QueryParams{
+			Filters:         []ListFilter{{Field: "user_name", Op: ListFilterEquals, Value: "alice"}},
+			FilterColumnMap: colMap,
+		}
+		q, err := BuildQuery(db, &TestUser{}, qpOK)
+		require.NoError(t, err)
+		assert.NotNil(t, q)
+
+		qpBad := QueryParams{
+			Filters:         []ListFilter{{Field: "email", Op: ListFilterEquals, Value: "alice@example.com"}},
+			FilterColumnMap: colMap,
+		}
+		_, err = BuildQuery(db, &TestUser{}, qpBad)
+		require.ErrorIs(t, err, ErrInvalidListOption)
+		assert.Contains(t, err.Error(), "not filterable")
+	})
+}
+
+func TestDBListAndCount(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	for i := 1; i <= 5; i++ {
+		require.NoError(t, db.Create(&TestUser{
+			Name:  fmt.Sprintf("lc_user_%d", i),
+			Email: fmt.Sprintf("lc_%d@example.com", i),
+			Age:   20 + i,
+		}).Error)
+	}
+
+	t.Run("returns total count and paginated slice", func(t *testing.T) {
+		var users []TestUser
+		total, err := DBListAndCount(ctx, db, &TestUser{}, &users, QueryParams{
+			Filters: []ListFilter{
+				{Field: "user_age", Op: ListFilterGreaterEquals, Value: 22},
+			},
+			FilterColumnMap:     map[string]string{"user_age": "age"},
+			OrderBy:             []string{"-age"},
+			AllowedOrderColumns: NewColumnSet("age", "id"),
+			Limit:               2,
+			Offset:              1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int64(4), total) // ages 22, 23, 24, 25
+		require.Len(t, users, 2)
+		assert.Equal(t, 24, users[0].Age)
+		assert.Equal(t, 23, users[1].Age)
+	})
+
+	t.Run("total zero short-circuits Find and resets non-empty slice", func(t *testing.T) {
+		users := []TestUser{{Name: "stale"}}
+		total, err := DBListAndCount(ctx, db, &TestUser{}, &users, QueryParams{
+			Filters: []ListFilter{
+				{Field: "name", Op: ListFilterEquals, Value: "non_existent"},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), total)
+		assert.Empty(t, users)
+	})
+
+	t.Run("invalid order_by fails before query execution even when count would be zero", func(t *testing.T) {
+		var users []TestUser
+		_, err := DBListAndCount(ctx, db, &TestUser{}, &users, QueryParams{
+			Filters: []ListFilter{
+				{Field: "name", Op: ListFilterEquals, Value: "non_existent"},
+			},
+			OrderBy: []string{"age; DROP TABLE users"},
+		})
+		require.ErrorIs(t, err, ErrInvalidListOption)
+	})
+}
+
+func TestNoDoubleWrapInsideRunDBOp(t *testing.T) {
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	type NonExistent struct {
+		ID uint `gorm:"primaryKey"`
+	}
+
+	err := RunDBOp(ctx, nil, nil, nil, OpWrite, "create item", func(dbCtx context.Context) error {
+		return DBCreate(dbCtx, db, &NonExistent{}, &NonExistent{ID: 1})
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "create item: database operation failed")
+	assert.NotContains(t, err.Error(), "failed to create database record")
 }

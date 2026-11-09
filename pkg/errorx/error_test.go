@@ -69,6 +69,8 @@ func TestError_CloneAndImmutability(t *testing.T) {
 	assert.Nil(t, nilErr.WithMetadata(nil))
 	assert.Nil(t, nilErr.WithDetails(1))
 	assert.Nil(t, nilErr.WithCause(errors.New("x")))
+	assert.Nil(t, nilErr.WithStack())
+	assert.Empty(t, nilErr.Stack())
 	assert.Nil(t, nilErr.Metadata())
 	assert.Empty(t, nilErr.Error())
 	assert.Nil(t, nilErr.Unwrap())
@@ -149,4 +151,76 @@ func TestError_FromErrorAndIsCode(t *testing.T) {
 	assert.False(t, ok)
 	assert.False(t, IsCode(stdErr, CodeSystemError))
 	assert.False(t, IsCode(nil, CodeOK))
+}
+
+func TestError_StackTracing(t *testing.T) {
+	// 1. 服务端系统级错误 (2xxxx) 默认自动捕获堆栈
+	serverErr := New(CodeSystemError, "系统故障")
+	assert.NotEmpty(t, serverErr.Stack())
+	assert.Contains(t, serverErr.Stack(), "error_test.go")
+	assert.Nil(t, serverErr.Unwrap())
+	assert.Equal(t, "error: code = 20000 msg = 系统故障", serverErr.Error())
+
+	// Format %+v 包含堆栈
+	formattedServerErr := fmt.Sprintf("%+v", serverErr)
+	assert.Contains(t, formattedServerErr, "error: code = 20000 msg = 系统故障")
+	assert.Contains(t, formattedServerErr, "error_test.go")
+
+	// LogValue 包含 stack，但无冗余 cause
+	val := serverErr.LogValue()
+	assert.Equal(t, slog.KindGroup, val.Kind())
+	attrs := val.Group()
+	var hasStack, hasCause bool
+	for _, a := range attrs {
+		if a.Key == "stack" {
+			hasStack = true
+		}
+		if a.Key == "cause" {
+			hasCause = true
+		}
+	}
+	assert.True(t, hasStack)
+	assert.False(t, hasCause)
+
+	// 2. 客户端错误默认不捕获堆栈以保持高性能
+	clientErr := New(CodeInvalidParam, "参数错误")
+	assert.Empty(t, clientErr.Stack())
+
+	// 3. 显式 WithStack 增强（保护性克隆，不可变）
+	stacked := clientErr.WithStack()
+	assert.NotSame(t, clientErr, stacked)
+	assert.Empty(t, clientErr.Stack())
+	assert.NotEmpty(t, stacked.Stack())
+	assert.Contains(t, stacked.Stack(), "error_test.go")
+
+	// 已有 cause 的错误调用 WithStack
+	underlying := errors.New("underlying io issue")
+	wrapped := Wrap(underlying, CodeExternalError, "依赖故障")
+	assert.NotEmpty(t, wrapped.Stack())
+	assert.Contains(t, wrapped.Stack(), "underlying io issue")
+	stackedWrapped := wrapped.WithStack()
+	assert.NotEmpty(t, stackedWrapped.Stack())
+
+	// 4. 显式构造函数 NewWithStack 与 ErrorfWithStack
+	explicitStackErr := NewWithStack(CodeInvalidParam, "显式记录堆栈")
+	assert.NotEmpty(t, explicitStackErr.Stack())
+	assert.Contains(t, explicitStackErr.Stack(), "error_test.go")
+
+	explicitFormatStackErr := ErrorfWithStack(CodeForbidden, "无权访问 %s", "/admin")
+	assert.NotEmpty(t, explicitFormatStackErr.Stack())
+	assert.Equal(t, "无权访问 /admin", explicitFormatStackErr.Msg)
+
+	// 5. BizCode 扩展方法构建
+	bizServerErr := CodeSystemError.Error("系统服务异常")
+	assert.NotEmpty(t, bizServerErr.Stack())
+
+	bizClientErr := CodeInvalidParam.Error("普通参数错误")
+	assert.Empty(t, bizClientErr.Stack())
+
+	bizStackErr := CodeInvalidParam.ErrorWithStack("带堆栈参数错误")
+	assert.NotEmpty(t, bizStackErr.Stack())
+
+	bizFormatStackErr := CodeInvalidParam.ErrorfWithStack("字段 %s 无效", "age")
+	assert.NotEmpty(t, bizFormatStackErr.Stack())
+	assert.Equal(t, "字段 age 无效", bizFormatStackErr.Msg)
 }

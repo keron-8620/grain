@@ -4,8 +4,10 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -15,7 +17,21 @@ import (
 	"gorm.io/gorm"
 )
 
+func wrapCrudError(ctx context.Context, err error, msg string) error {
+	if err == nil {
+		return nil
+	}
+	mapped := MapError(err)
+	if hasDBOpTrace(ctx) {
+		return mapped
+	}
+	return errors.WrapIf(mapped, msg)
+}
+
 func contextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -25,50 +41,31 @@ func contextError(ctx context.Context) error {
 	return nil
 }
 
-// DBPanic is a generic GORM panic recovery function (must be used in a deferred closure, e.g. defer func() { err = DBPanic(ctx, db, err) }()).
-// Features: 1. Catches panic and converts to standard error 2. Rolls back transaction (transaction context only) 3. Logs detailed info (stack trace, SQL context).
-// Parameters:
-//   - ctx: context used for logging and GORM operations
-//   - db: GORM database instance (pass tx instance for transactions, standard db instance otherwise)
-//   - bizErr: original error to return if no panic occurred
-//
-// Return value:
-//   - error: wrapped error with panic details on panic; original error on normal flow
-func DBPanic(ctx context.Context, db *gorm.DB, bizErr error) error {
-	// 1. Recover from panic
-	r := recover()
+// handleRecoveredPanic handles transaction rollback, stack extraction, and logging for panics.
+// When autoRollback is true, it rolls back the active transaction if not already handled.
+func handleRecoveredPanic(ctx context.Context, db *gorm.DB, r any, logMsg, errDetails string, autoRollback bool) error {
 	if r == nil {
-		// No panic, return original business error
-		return bizErr
+		return nil
 	}
 
-	// 2. Safely rollback transaction (defensive check to prevent nil pointer panic)
-	if db != nil && db.Statement != nil && db.Statement.ConnPool != nil {
-		// Log on rollback failure without affecting main flow
-		if rollbackErr := db.Rollback().Error; rollbackErr != nil && db.Logger != nil {
-			db.Logger.Error(ctx, "failed to rollback transaction", "panic", r, "rollback_err", rollbackErr)
+	if autoRollback && db != nil && db.Statement != nil && db.Statement.ConnPool != nil {
+		if committer, ok := db.Statement.ConnPool.(gorm.TxCommitter); ok && committer != nil {
+			if rollbackErr := db.WithContext(ctx).Rollback().Error; rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && !errors.Is(rollbackErr, ErrInvalidTransaction) && !errors.Is(rollbackErr, gorm.ErrInvalidTransaction) && db.Logger != nil {
+				db.Logger.Error(ctx, "failed to rollback transaction: panic=%v, rollback_err=%v", r, rollbackErr)
+			}
 		}
 	}
 
-	// 3. Build error message
 	stackInfo := string(debug.Stack())
-	errMsg := "database operation panicked"
-
-	// 4. Log full details (SQL, parameters, stack trace, panic content)
 	if db != nil && db.Logger != nil {
-		logFields := []any{
-			"panic", r,
-			"stack", stackInfo,
+		if db.Statement != nil && db.Statement.SQL.Len() > 0 {
+			db.Logger.Error(ctx, "%s: panic=%v, sql=%s, vars=%v\n%s", logMsg, r, db.Statement.SQL.String(), db.Statement.Vars, stackInfo)
+		} else {
+			db.Logger.Error(ctx, "%s: panic=%v\n%s", logMsg, r, stackInfo)
 		}
-		// Safely append SQL context
-		if db.Statement != nil {
-			logFields = append(logFields, "sql", db.Statement.SQL.String())
-			logFields = append(logFields, "vars", db.Statement.Vars)
-		}
-		db.Logger.Error(ctx, errMsg, logFields...)
 	}
 
-	return errors.NewWithDetails("recovered database panic", "panic", r)
+	return errors.NewWithDetails(errDetails, "panic", r, "stack", stackInfo)
 }
 
 // DBRecover is a deferred panic recovery helper.
@@ -80,28 +77,9 @@ func DBRecover(ctx context.Context, db *gorm.DB, err *error) {
 	if r == nil {
 		return
 	}
-
-	if db != nil && db.Statement != nil && db.Statement.ConnPool != nil {
-		if rollbackErr := db.Rollback().Error; rollbackErr != nil && db.Logger != nil {
-			db.Logger.Error(ctx, "failed to rollback transaction", "panic", r, "rollback_err", rollbackErr)
-		}
-	}
-
-	stackInfo := string(debug.Stack())
-	if db != nil && db.Logger != nil {
-		logFields := []any{
-			"panic", r,
-			"stack", stackInfo,
-		}
-		if db.Statement != nil {
-			logFields = append(logFields, "sql", db.Statement.SQL.String())
-			logFields = append(logFields, "vars", db.Statement.Vars)
-		}
-		db.Logger.Error(ctx, "database operation panicked", logFields...)
-	}
-
+	recErr := handleRecoveredPanic(ctx, db, r, "database operation panicked", "recovered database panic", true)
 	if err != nil {
-		*err = errors.NewWithDetails("recovered database panic", "panic", r)
+		*err = recErr
 	}
 }
 
@@ -112,22 +90,6 @@ func DBRecover(ctx context.Context, db *gorm.DB, err *error) {
 // value: data to create
 // Returns possible error from operation
 func DBCreate(ctx context.Context, db *gorm.DB, model, value any) error {
-	if err := contextError(ctx); err != nil {
-		return err
-	}
-
-	if err := db.WithContext(ctx).Model(model).Create(value).Error; err != nil {
-		return errors.WrapIf(err, "failed to create database record")
-	}
-	return nil
-}
-
-// WithTransaction handles transaction commit, rollback, and panic recovery uniformly.
-// It supports nested transactions and savepoints via GORM's native Transaction mechanism.
-func WithTransaction(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) (err error) {
-	if ctx == nil {
-		return errors.New("context instance is nil")
-	}
 	if db == nil {
 		return errors.New("database instance is nil")
 	}
@@ -135,22 +97,55 @@ func WithTransaction(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) erro
 		return err
 	}
 
+	if err := db.WithContext(ctx).Model(model).Create(value).Error; err != nil {
+		return wrapCrudError(ctx, err, "failed to create database record")
+	}
+	return nil
+}
+
+// withTransaction handles transaction commit, rollback, and panic recovery uniformly.
+// It supports nested transactions and savepoints via GORM's native Transaction mechanism.
+func withTransaction(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) (err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if db == nil {
+		return errors.New("database instance is nil")
+	}
+	if err := contextError(ctx); err != nil {
+		return err
+	}
+	if fn == nil {
+		return errors.New("transaction function is nil")
+	}
+
+	var currentTx *gorm.DB
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = errors.NewWithDetails(
-				"database transaction panicked",
-				"panic", recovered,
-				"stack", string(debug.Stack()),
-			)
+			targetDB := currentTx
+			if targetDB == nil {
+				targetDB = db
+			}
+			// GORM's native Transaction already performs rollback or rollback-to-savepoint
+			// before re-panicking. Pass autoRollback=false so we do not issue a duplicate
+			// rollback or inadvertently destroy an outer transaction in nested savepoint mode.
+			err = handleRecoveredPanic(ctx, targetDB, recovered, "database transaction panicked", "database transaction panicked", false)
 		}
 	}()
 
-	return db.WithContext(ctx).Transaction(fn)
+	txErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		currentTx = tx
+		return fn(tx)
+	})
+	if txErr != nil {
+		return MapError(txErr)
+	}
+	return nil
 }
 
-// withTransaction is kept for package-internal and backward compatibility.
-func withTransaction(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error {
-	return WithTransaction(ctx, db, fn)
+// WithTransaction is kept for package-internal and backward compatibility.
+func WithTransaction(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error {
+	return withTransaction(ctx, db, fn)
 }
 
 // DBCreateTX creates a database record within an explicit transaction.
@@ -161,7 +156,7 @@ func withTransaction(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) erro
 func DBCreateTX(ctx context.Context, db *gorm.DB, model, value any) error {
 	return withTransaction(ctx, db, func(tx *gorm.DB) error {
 		if err := tx.Model(model).Create(value).Error; err != nil {
-			return errors.WrapIf(err, "failed to create database record")
+			return wrapCrudError(ctx, err, "failed to create database record")
 		}
 		return nil
 	})
@@ -169,22 +164,31 @@ func DBCreateTX(ctx context.Context, db *gorm.DB, model, value any) error {
 
 // DBCreateRelationTx creates a database record and appends associations within a transaction.
 // Association keys in upmap are iterated in deterministic sorted order to prevent database deadlocks.
+// Associations declared in upmap are omitted during primary record creation to prevent duplicate saves
+// when value already contains populated association data.
 func DBCreateRelationTx(ctx context.Context, db *gorm.DB, model, value any, upmap map[string]any) error {
 	return withTransaction(ctx, db, func(tx *gorm.DB) error {
-		if err := tx.Model(model).Create(value).Error; err != nil {
-			return errors.WrapIf(err, "failed to create database record")
-		}
+		createDB := tx.Model(model)
 		if len(upmap) == 0 {
+			if err := createDB.Create(value).Error; err != nil {
+				return wrapCrudError(ctx, err, "failed to create database record")
+			}
 			return nil
 		}
+
 		keys := make([]string, 0, len(upmap))
 		for k := range upmap {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
+
+		if err := createDB.Omit(keys...).Create(value).Error; err != nil {
+			return wrapCrudError(ctx, err, "failed to create database record")
+		}
+
 		for _, k := range keys {
 			if err := tx.Model(value).Association(k).Append(upmap[k]); err != nil {
-				return errors.WrapIf(err, "failed to update association")
+				return wrapCrudError(ctx, err, "failed to update association")
 			}
 		}
 		return nil
@@ -197,72 +201,100 @@ func DBCreateRelationTx(ctx context.Context, db *gorm.DB, model, value any, upma
 // m: target model
 // data: main table update data (can be nil or empty map)
 // conds: query conditions
-// Returns possible error from operation
-func DBUpdate(ctx context.Context, db *gorm.DB, m any, data map[string]any, conds ...any) error {
+// Returns rows affected and possible error from operation
+func DBUpdate(ctx context.Context, db *gorm.DB, m any, data map[string]any, conds ...any) (int64, error) {
+	if db == nil {
+		return 0, errors.New("database instance is nil")
+	}
 	if err := contextError(ctx); err != nil {
-		return err
+		return 0, err
 	}
 
 	// Return immediately if nothing to update
 	if len(data) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// Check if query conditions are provided
 	if len(conds) == 0 {
-		return errors.WithStack(gorm.ErrMissingWhereClause)
+		return 0, errors.WithStack(ErrMissingWhereClause)
 	}
 
-	if err := db.WithContext(ctx).Model(m).Where(conds[0], conds[1:]...).Updates(data).Error; err != nil {
-		return errors.WrapIf(err, "failed to update database record")
+	res := db.WithContext(ctx).Model(m).Where(conds[0], conds[1:]...).Updates(data)
+	if res.Error != nil {
+		return 0, wrapCrudError(ctx, res.Error, "failed to update database record")
 	}
-	return nil
+	return res.RowsAffected, nil
 }
 
 // DBUpdateTx updates database records within an explicit transaction.
-func DBUpdateTx(ctx context.Context, db *gorm.DB, m any, data map[string]any, conds ...any) error {
-	if err := contextError(ctx); err != nil {
-		return err
+func DBUpdateTx(ctx context.Context, db *gorm.DB, m any, data map[string]any, conds ...any) (rowsAffected int64, err error) {
+	if db == nil {
+		return 0, errors.New("database instance is nil")
 	}
-
-	// Return immediately if nothing to update
-	if len(data) == 0 {
-		return nil
+	if err := contextError(ctx); err != nil {
+		return 0, err
 	}
 
 	// Check if query conditions are provided
 	if len(conds) == 0 {
-		return errors.WithStack(gorm.ErrMissingWhereClause)
+		return 0, errors.WithStack(ErrMissingWhereClause)
 	}
 
-	return withTransaction(ctx, db, func(tx *gorm.DB) error {
-		if err := tx.Model(m).Where(conds[0], conds[1:]...).Updates(data).Error; err != nil {
-			return errors.WrapIf(err, "failed to update database record")
+	// Return immediately if nothing to update
+	if len(data) == 0 {
+		return 0, nil
+	}
+
+	err = withTransaction(ctx, db, func(tx *gorm.DB) error {
+		res := tx.Model(m).Where(conds[0], conds[1:]...).Updates(data)
+		if res.Error != nil {
+			return wrapCrudError(ctx, res.Error, "failed to update database record")
 		}
+		rowsAffected = res.RowsAffected
 		return nil
 	})
+	return rowsAffected, err
 }
 
 // DBUpdateRelationTx updates main table data and replaces associations within a transaction.
 // Association keys in upmap are iterated in deterministic sorted order to prevent database deadlocks.
+//
+// Important Scope & Usage Semantics:
+//  1. Single-Record Scope: Because GORM association replacement operates on a loaded model instance,
+//     this function queries and updates ONLY the first record matching conds (via First(m)).
+//  2. Model Parameter (m): m must be a non-nil pointer to a model struct. It is populated in-place
+//     with the queried record before applying updates and association replacements.
+//  3. Primary Key Behavior: If m already has a non-zero primary key set, GORM's First(m) automatically
+//     combines that primary key with conds. Pass a zero-initialized struct pointer (e.g. &User{}) when
+//     locating the record purely by conds.
 func DBUpdateRelationTx(ctx context.Context, db *gorm.DB, m any, data map[string]any, upmap map[string]any, conds ...any) error {
+	if db == nil {
+		return errors.New("database instance is nil")
+	}
+	if m == nil {
+		return errors.New("model instance cannot be nil")
+	}
+	if err := contextError(ctx); err != nil {
+		return err
+	}
 	// Check if query conditions are provided
 	if len(conds) == 0 {
-		return errors.WithStack(gorm.ErrMissingWhereClause)
+		return errors.WithStack(ErrMissingWhereClause)
 	}
 
 	return withTransaction(ctx, db, func(tx *gorm.DB) error {
-		if len(data) > 0 {
-			if err := tx.Model(m).Where(conds[0], conds[1:]...).Updates(data).Error; err != nil {
-				return errors.WrapIf(err, "failed to update database record")
+		if err := tx.Where(conds[0], conds[1:]...).First(m).Error; err != nil {
+			if errors.Is(err, ErrRecordNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
+				return wrapCrudError(ctx, ErrRecordNotFound, "record not found")
 			}
+			return wrapCrudError(ctx, err, "failed to query record")
 		}
 
-		if err := tx.Where(conds[0], conds[1:]...).First(m).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errors.WrapIf(err, "record not found")
+		if len(data) > 0 {
+			if err := tx.Model(m).Updates(data).Error; err != nil {
+				return wrapCrudError(ctx, err, "failed to update database record")
 			}
-			return errors.WrapIf(err, "failed to query record")
 		}
 
 		if len(upmap) == 0 {
@@ -277,7 +309,7 @@ func DBUpdateRelationTx(ctx context.Context, db *gorm.DB, m any, data map[string
 
 		for _, k := range keys {
 			if err := tx.Model(m).Association(k).Replace(upmap[k]); err != nil {
-				return errors.WrapIf(err, "failed to update association")
+				return wrapCrudError(ctx, err, "failed to update association")
 			}
 		}
 		return nil
@@ -289,20 +321,25 @@ func DBUpdateRelationTx(ctx context.Context, db *gorm.DB, m any, data map[string
 // Best Practice: When SkipDefaultTransaction is false (the GORM default), GORM already executes
 // single-table deletes within an internal transaction. Use DBDelete for standard single-table
 // operations. Use WithTransaction when multiple database operations must succeed or fail together.
-func DBDelete(ctx context.Context, db *gorm.DB, model any, conds ...any) error {
+// Returns rows affected and possible error from operation.
+func DBDelete(ctx context.Context, db *gorm.DB, model any, conds ...any) (int64, error) {
+	if db == nil {
+		return 0, errors.New("database instance is nil")
+	}
 	if err := contextError(ctx); err != nil {
-		return err
+		return 0, err
 	}
 
 	// Check if query conditions are provided
 	if len(conds) == 0 {
-		return gorm.ErrMissingWhereClause
+		return 0, errors.WithStack(ErrMissingWhereClause)
 	}
 
-	if err := db.WithContext(ctx).Delete(model, conds...).Error; err != nil {
-		return errors.WrapIf(err, "failed to delete database record")
+	res := db.WithContext(ctx).Delete(model, conds...)
+	if res.Error != nil {
+		return 0, wrapCrudError(ctx, res.Error, "failed to delete database record")
 	}
-	return nil
+	return res.RowsAffected, nil
 }
 
 // DBDeleteTx deletes database records within an explicit transaction.
@@ -310,33 +347,37 @@ func DBDelete(ctx context.Context, db *gorm.DB, model any, conds ...any) error {
 // db: GORM database instance
 // model: target model
 // conds: query conditions
-// Returns possible error from operation
-func DBDeleteTx(ctx context.Context, db *gorm.DB, model any, conds ...any) error {
+// Returns rows affected and possible error from operation.
+func DBDeleteTx(ctx context.Context, db *gorm.DB, model any, conds ...any) (rowsAffected int64, err error) {
+	if db == nil {
+		return 0, errors.New("database instance is nil")
+	}
 	if err := contextError(ctx); err != nil {
-		return err
+		return 0, err
 	}
 
 	// Check if query conditions are provided
 	if len(conds) == 0 {
-		return gorm.ErrMissingWhereClause
+		return 0, errors.WithStack(ErrMissingWhereClause)
 	}
 
-	return withTransaction(ctx, db, func(tx *gorm.DB) error {
-		if err := tx.Delete(model, conds...).Error; err != nil {
-			return errors.WrapIf(err, "failed to delete database record")
+	err = withTransaction(ctx, db, func(tx *gorm.DB) error {
+		res := tx.Delete(model, conds...)
+		if res.Error != nil {
+			return wrapCrudError(ctx, res.Error, "failed to delete database record")
 		}
+		rowsAffected = res.RowsAffected
 		return nil
 	})
+	return rowsAffected, err
 }
 
-// DBGet queries a single database record, supporting preloading associations
-// ctx: context
-// db: GORM database instance
-// preloads: list of associations to preload
-// m: destination object for query result
-// conds: query conditions
-// Returns possible error from operation
-func DBGet(ctx context.Context, db *gorm.DB, preloads []string, m any, conds ...any) error {
+// DBFindOne queries a single database record with optional association preloads.
+// It follows the package's standard (ctx, db, model, ...) parameter ordering convention.
+func DBFindOne(ctx context.Context, db *gorm.DB, m any, preloads []string, conds ...any) error {
+	if db == nil {
+		return errors.New("database instance is nil")
+	}
 	if err := contextError(ctx); err != nil {
 		return err
 	}
@@ -350,7 +391,13 @@ func DBGet(ctx context.Context, db *gorm.DB, preloads []string, m any, conds ...
 
 	// Query the first matching record
 	err := dbCtx.First(m, conds...).Error
-	return errors.WrapIf(err, "failed to query database record")
+	return wrapCrudError(ctx, err, "failed to query database record")
+}
+
+// DBFind queries a single database record matching conds without association preloads.
+// It follows the package's standard (ctx, db, model, ...) parameter ordering convention.
+func DBFind(ctx context.Context, db *gorm.DB, m any, conds ...any) error {
+	return DBFindOne(ctx, db, m, nil, conds...)
 }
 
 // DBList queries a list of database records, supporting pagination, ordering, conditions, and structured filters
@@ -361,6 +408,9 @@ func DBGet(ctx context.Context, db *gorm.DB, preloads []string, m any, conds ...
 // query: query parameters
 // Returns possible error from operation
 func DBList(ctx context.Context, db *gorm.DB, model, value any, query QueryParams) error {
+	if db == nil {
+		return errors.New("database instance is nil")
+	}
 	if err := contextError(ctx); err != nil {
 		return err
 	}
@@ -373,66 +423,125 @@ func DBList(ctx context.Context, db *gorm.DB, model, value any, query QueryParam
 	// Execute query
 	result := mdb.Find(value)
 	if result.Error != nil {
-		return errors.WrapIf(result.Error, "failed to query database record")
+		return wrapCrudError(ctx, result.Error, "failed to query database record")
 	}
 
 	return nil
 }
 
-// BuildQuery constructs a GORM query builder from QueryParams, applying:
-// 1. Model
-// 2. Legacy Query map (in deterministic sorted order)
-// 3. Structured Filters (via ApplyListFilters with safe field validation and LIKE escaping)
-// 4. Columns / Omit
-// 5. OrderBy (with ValidateOrderBy SQL identifier validation)
-// 6. Pagination (Limit / Offset)
-// 7. Preload associations
-func BuildQuery(db *gorm.DB, model any, query QueryParams) (*gorm.DB, error) {
+// DBListAndCount validates QueryParams and builds the filtered base query once,
+// executing both a COUNT query and (when total > 0) a paginated list query.
+func DBListAndCount(ctx context.Context, db *gorm.DB, model, value any, query QueryParams) (int64, error) {
+	if db == nil {
+		return 0, errors.New("database instance is nil")
+	}
+	if err := contextError(ctx); err != nil {
+		return 0, err
+	}
+
+	// Validate non-filter query modifiers upfront so malformed options fail before any SQL round-trip.
+	normalizedOrder, err := validateAndNormalizeModifiers(query)
+	if err != nil {
+		return 0, err
+	}
+
+	filterDB, err := buildFilterQuery(db.WithContext(ctx), model, query)
+	if err != nil {
+		return 0, err
+	}
+
+	var total int64
+	if err := filterDB.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return 0, wrapCrudError(ctx, err, "failed to count database records")
+	}
+
+	if total == 0 {
+		resetSliceValue(value)
+		return 0, nil
+	}
+
+	listDB := applyValidatedModifiers(filterDB, query, normalizedOrder)
+	if err := listDB.Find(value).Error; err != nil {
+		return 0, wrapCrudError(ctx, err, "failed to query database record")
+	}
+
+	return total, nil
+}
+
+func resetSliceValue(value any) {
+	if value == nil {
+		return
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.Pointer && !rv.IsNil() {
+		elem := rv.Elem()
+		if elem.Kind() == reflect.Slice && elem.Len() > 0 {
+			elem.SetLen(0)
+		}
+	}
+}
+
+func buildFilterQuery(db *gorm.DB, model any, query QueryParams) (*gorm.DB, error) {
 	if db == nil {
 		return nil, errors.New("database instance is nil")
 	}
 	mdb := db.Model(model)
-
-	// 1. Add legacy query conditions in deterministic sorted order
-	if len(query.Query) > 0 {
-		keys := make([]string, 0, len(query.Query))
-		for k := range query.Query {
-			if k == "" {
-				continue
-			}
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			mdb = mdb.Where(k, query.Query[k])
-		}
-	}
-
-	// 2. Add structured AIP filters
 	if len(query.Filters) > 0 {
 		var err error
-		mdb, err = ApplyListFilters(mdb, query.Filters)
+		mdb, err = applyListFiltersWithOptions(mdb, query.Filters, query.AllowedFilterColumns, query.FilterColumnMap)
 		if err != nil {
 			return nil, err
 		}
 	}
+	return mdb, nil
+}
 
-	// 3. Specify selected and omitted fields (Columns takes precedence if both are specified)
+func validateAndNormalizeModifiers(query QueryParams) ([]string, error) {
+	if len(query.Columns) > 0 {
+		for _, col := range query.Columns {
+			if err := validateSQLIdentifier(col); err != nil {
+				return nil, fmt.Errorf("%w: invalid select column %q: %v", ErrInvalidListOption, col, err)
+			}
+		}
+	} else if len(query.Omit) > 0 {
+		for _, col := range query.Omit {
+			if err := validateSQLIdentifier(col); err != nil {
+				return nil, fmt.Errorf("%w: invalid omit column %q: %v", ErrInvalidListOption, col, err)
+			}
+		}
+	}
+
+	var normalizedOrder []string
+	if len(query.OrderBy) > 0 {
+		normalizedOrder = make([]string, 0, len(query.OrderBy))
+		for _, clause := range query.OrderBy {
+			trimmed := strings.TrimSpace(clause)
+			if trimmed == "" {
+				continue
+			}
+			sanitized, err := SanitizeOrderBy(trimmed, query.AllowedOrderColumns)
+			if err != nil {
+				return nil, err
+			}
+			if sanitized != "" {
+				normalizedOrder = append(normalizedOrder, sanitized)
+			}
+		}
+	}
+	return normalizedOrder, nil
+}
+
+func applyValidatedModifiers(mdb *gorm.DB, query QueryParams, normalizedOrder []string) *gorm.DB {
 	if len(query.Columns) > 0 {
 		mdb = mdb.Select(query.Columns)
 	} else if len(query.Omit) > 0 {
 		mdb = mdb.Omit(query.Omit...)
 	}
 
-	// 4. Validate and apply ordering conditions
-	if len(query.OrderBy) > 0 {
-		if err := ValidateOrderBy(query.OrderBy); err != nil {
-			return nil, err
-		}
-		mdb = mdb.Order(strings.Join(query.OrderBy, ","))
+	if len(normalizedOrder) > 0 {
+		mdb = mdb.Order(strings.Join(normalizedOrder, ", "))
 	}
 
-	// 5. Add pagination conditions
 	if query.Limit > 0 {
 		mdb = mdb.Limit(query.Limit)
 	}
@@ -440,38 +549,52 @@ func BuildQuery(db *gorm.DB, model any, query QueryParams) (*gorm.DB, error) {
 		mdb = mdb.Offset(query.Offset)
 	}
 
-	// 6. Preload associations
 	for _, preload := range query.Preloads {
 		mdb = mdb.Preload(preload)
 	}
 
-	return mdb, nil
+	return mdb
 }
 
-// DBCount counts database records matching the provided query map.
-func DBCount(ctx context.Context, db *gorm.DB, model any, query map[string]any) (int64, error) {
-	return DBCountWithParams(ctx, db, model, QueryParams{Query: query})
+// BuildQuery constructs a GORM query builder from QueryParams, applying:
+// 1. Model
+// 2. Structured Filters (with optional AllowedFilterColumns / FilterColumnMap, safe field validation, and LIKE escaping)
+// 3. Columns / Omit (with validateSQLIdentifier validation)
+// 4. OrderBy (with SanitizeOrderBy SQL identifier validation and -column normalization)
+// 5. Pagination (Limit / Offset)
+// 6. Preload associations
+func BuildQuery(db *gorm.DB, model any, query QueryParams) (*gorm.DB, error) {
+	mdb, err := buildFilterQuery(db, model, query)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedOrder, err := validateAndNormalizeModifiers(query)
+	if err != nil {
+		return nil, err
+	}
+
+	return applyValidatedModifiers(mdb, query, normalizedOrder), nil
 }
 
-// DBCountWithParams counts records using the full QueryParams structure (supporting both Query and Filters).
-// Pagination, ordering, and preloads are automatically omitted for counting.
-func DBCountWithParams(ctx context.Context, db *gorm.DB, model any, query QueryParams) (int64, error) {
+// DBCount counts database records matching the Filters in QueryParams.
+// Pagination, ordering, columns, omit, and preloads are automatically omitted for counting.
+func DBCount(ctx context.Context, db *gorm.DB, model any, query QueryParams) (int64, error) {
+	if db == nil {
+		return 0, errors.New("database instance is nil")
+	}
 	if err := contextError(ctx); err != nil {
 		return 0, err
 	}
 
-	countParams := QueryParams{
-		Query:   query.Query,
-		Filters: query.Filters,
-	}
-	mdb, err := BuildQuery(db.WithContext(ctx), model, countParams)
+	mdb, err := buildFilterQuery(db.WithContext(ctx), model, query)
 	if err != nil {
 		return 0, err
 	}
 
 	var count int64 = 0
 	if err := mdb.Count(&count).Error; err != nil {
-		return 0, errors.WrapIf(err, "failed to count database records")
+		return 0, wrapCrudError(ctx, err, "failed to count database records")
 	}
 
 	return count, nil
@@ -491,12 +614,9 @@ func ValidateOrderBy(clauses []string, allowedColumns ...string) error {
 	if len(clauses) == 0 {
 		return nil
 	}
-	var allowMap map[string]struct{}
+	var allowed map[string]struct{}
 	if len(allowedColumns) > 0 {
-		allowMap = make(map[string]struct{}, len(allowedColumns))
-		for _, col := range allowedColumns {
-			allowMap[strings.ToLower(col)] = struct{}{}
-		}
+		allowed = NewColumnSet(allowedColumns...)
 	}
 
 	for _, clause := range clauses {
@@ -504,35 +624,8 @@ func ValidateOrderBy(clauses []string, allowedColumns ...string) error {
 		if trimmed == "" {
 			continue
 		}
-		parts := strings.Split(trimmed, ",")
-		for _, part := range parts {
-			p := strings.TrimSpace(part)
-			if p == "" {
-				return fmt.Errorf("%w: empty order_by clause", ErrInvalidListOption)
-			}
-			fields := strings.Fields(p)
-			if len(fields) > 2 {
-				return fmt.Errorf("%w: invalid order_by clause %q", ErrInvalidListOption, p)
-			}
-			col := fields[0]
-			if err := validateSQLIdentifier(col); err != nil {
-				return fmt.Errorf("%w: invalid order_by column %q: %v", ErrInvalidListOption, col, err)
-			}
-			if allowMap != nil {
-				lookup := strings.ToLower(col)
-				if idx := strings.LastIndex(lookup, "."); idx != -1 {
-					lookup = lookup[idx+1:]
-				}
-				if _, ok := allowMap[lookup]; !ok {
-					return fmt.Errorf("%w: column %q is not sortable", ErrInvalidListOption, col)
-				}
-			}
-			if len(fields) == 2 {
-				dir := strings.ToUpper(fields[1])
-				if dir != "ASC" && dir != "DESC" {
-					return fmt.Errorf("%w: invalid order direction %q (must be ASC or DESC)", ErrInvalidListOption, fields[1])
-				}
-			}
+		if _, err := SanitizeOrderBy(trimmed, allowed); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -567,14 +660,16 @@ func validateSQLIdentifier(ident string) error {
 
 // QueryParams represents query parameters for configuring list queries
 type QueryParams struct {
-	Preloads []string       // List of associations to preload
-	Query    map[string]any // Legacy/raw query condition mapping
-	Filters  []ListFilter   // Structured AIP list filters
-	OrderBy  []string       // List of ordering fields
-	Limit    int            // Page size
-	Offset   int            // Page offset
-	Omit     []string       // List of fields to omit
-	Columns  []string       // List of fields to select
+	Preloads             []string            // List of associations to preload
+	Filters              []ListFilter        // Structured AIP list filters
+	AllowedFilterColumns map[string]struct{} // Optional allowlist of filterable columns (created via NewColumnSet); enforced by BuildQuery when non-nil
+	FilterColumnMap      map[string]string   // Optional field-to-column mapping allowlist; when non-nil, only keys in the map are allowed and mapped to their column names
+	OrderBy              []string            // List of ordering fields
+	AllowedOrderColumns  map[string]struct{} // Optional allowlist of sortable columns (created via NewColumnSet); enforced by BuildQuery when non-nil
+	Limit                int                 // Page size
+	Offset               int                 // Page offset
+	Omit                 []string            // List of fields to omit
+	Columns              []string            // List of fields to select
 }
 
 func (q *QueryParams) LogValue() slog.Value {
@@ -589,7 +684,6 @@ func (q *QueryParams) LogValue() slog.Value {
 
 	return slog.GroupValue(
 		slog.String("preloads", strings.Join(q.Preloads, ",")),
-		slog.Any("query", q.Query),
 		slog.String("filters", strings.Join(filterAttrs, "; ")),
 		slog.String("order_by", strings.Join(q.OrderBy, ",")),
 		slog.Int("limit", q.Limit),

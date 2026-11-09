@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -126,6 +126,53 @@ func TestNewGormDB_SQLite(t *testing.T) {
 	}
 }
 
+func TestNewGormDB_PoolDefaults(t *testing.T) {
+	c := &DBConf{
+		Type: "sqlite",
+		Dsn:  ":memory:",
+	}
+
+	db, err := NewGormDB(c, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	defer func() { _ = CloseGormDB(db) }()
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("expected no error getting sql.DB: %v", err)
+	}
+
+	stats := sqlDB.Stats()
+	if stats.MaxOpenConnections != DefaultMaxOpenConns {
+		t.Errorf("expected MaxOpenConnections %d, got %d", DefaultMaxOpenConns, stats.MaxOpenConnections)
+	}
+
+	// Negative values explicitly disable pool limits (passed as 0 to database/sql)
+	cUnlimited := &DBConf{
+		Type:            "sqlite",
+		Dsn:             ":memory:",
+		MaxIdleConns:    -1,
+		MaxOpenConns:    -1,
+		ConnMaxLifetime: -1,
+		ConnMaxIdleTime: -1,
+	}
+	dbUnlimited, err := NewGormDB(cUnlimited, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	defer func() { _ = CloseGormDB(dbUnlimited) }()
+
+	sqlDBUnlimited, err := dbUnlimited.DB()
+	if err != nil {
+		t.Fatalf("expected no error getting sql.DB: %v", err)
+	}
+	statsUnlimited := sqlDBUnlimited.Stats()
+	if statsUnlimited.MaxOpenConnections != 0 {
+		t.Errorf("expected MaxOpenConnections 0 (unlimited) when configured < 0, got %d", statsUnlimited.MaxOpenConnections)
+	}
+}
+
 func TestNewGormDB_LogSQL(t *testing.T) {
 	t.Run("LogSQL enabled with nil gc", func(t *testing.T) {
 		c := &DBConf{
@@ -157,6 +204,50 @@ func TestNewGormDB_LogSQL(t *testing.T) {
 		defer func() { _ = CloseGormDB(db) }()
 		if db.Logger == nil {
 			t.Fatal("expected logger to be present")
+		}
+	})
+
+	t.Run("LogSQL disabled with custom SlogLogger preserves explicit log level", func(t *testing.T) {
+		c := &DBConf{
+			Type:   "sqlite",
+			Dsn:    ":memory:",
+			LogSQL: false,
+		}
+		customGC := NewGormConfigWithSlog(SlogLoggerConfig{
+			LogLevel: logger.Silent,
+		})
+		db, err := NewGormDB(c, customGC)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		defer func() { _ = CloseGormDB(db) }()
+		sl, ok := db.Logger.(*SlogLogger)
+		if !ok {
+			t.Fatal("expected *SlogLogger")
+		}
+		if sl.Config.LogLevel != logger.Silent {
+			t.Fatalf("expected LogLevel %v to be preserved, got %v", logger.Silent, sl.Config.LogLevel)
+		}
+	})
+
+	t.Run("LogSQL disabled with unset SlogLogger LogLevel defaults to Warn", func(t *testing.T) {
+		c := &DBConf{
+			Type:   "sqlite",
+			Dsn:    ":memory:",
+			LogSQL: false,
+		}
+		customGC := NewGormConfigWithSlog(SlogLoggerConfig{})
+		db, err := NewGormDB(c, customGC)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		defer func() { _ = CloseGormDB(db) }()
+		sl, ok := db.Logger.(*SlogLogger)
+		if !ok {
+			t.Fatal("expected *SlogLogger")
+		}
+		if sl.Config.LogLevel != logger.Warn {
+			t.Fatalf("expected LogLevel %v, got %v", logger.Warn, sl.Config.LogLevel)
 		}
 	})
 }

@@ -1,10 +1,14 @@
 package errorx
 
 import (
+	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"strconv"
 	"sync"
+
+	emperror "emperror.dev/errors"
 )
 
 // BizCode 代表业务错误码。
@@ -13,7 +17,6 @@ import (
 //   - 1xxxx: 客户端错误 / 通用参数 / 认证授权 (对应 HTTP 4xx)
 //   - 2xxxx: 服务端系统内部错误 (对应 HTTP 500)
 //   - 3xxxx: 外部依赖 / 下游基础设施异常 (对应 HTTP 502 / 503 / 504)
-//   - 4xxxx: 业务逻辑受阻 / 业务规则不符 (对应 HTTP 400 / 422)
 type BizCode int
 
 const (
@@ -113,38 +116,6 @@ const (
 	CodeInvalidValue            BizCode = 41012 // 无效的数据类型
 	CodeInvalidValueOfLength    BizCode = 41013 // 关联值无效, 长度不匹配
 	CodePreloadNotAllowed       BizCode = 41014 // 使用计数时不允许预加载
-
-	// 文件上传下载
-	CodeDownloadFileNotFound         BizCode = 42001 // 下载的文件未找到
-	CodeDownloadFilePermissionDenied BizCode = 42002 // 下载文件权限被拒绝
-	CodeDownloadFileFailed           BizCode = 42003 // 下载文件失败
-
-	// 压缩解压文件
-	CodeUnZIPFailed       BizCode = 42101 // 解压文件失败
-	CodeZIPFailed         BizCode = 42102 // 压缩文件失败
-	CodeZIPFileNotFound   BizCode = 42103 // 压缩文件未找到
-	CodeZIPFileIsEmpty    BizCode = 42104 // 压缩文件为空
-	CodeZIPFileIsNotValid BizCode = 42105 // 压缩文件无效
-
-	// 缓存文件
-	CodeExportCacheFileFailed BizCode = 42201 // 导出缓存文件失败
-	CodeDeleteCacheFileFailed BizCode = 42202 // 删除缓存文件失败
-
-	// 脚本相关
-	CodeScriptNotFound     BizCode = 43001 // 脚本未找到
-	CodeScriptIsBuiltin    BizCode = 43002 // 脚本为内置脚本
-	CodeScriptIsDisabled   BizCode = 43003 // 脚本已禁用
-	CodeScriptLogNotFound  BizCode = 43004 // 脚本日志未找到
-	CodeScriptSaveFailed   BizCode = 43005 // 脚本保存失败
-	CodeScriptRemoveFailed BizCode = 43006 // 脚本删除失败
-
-	// 程序包相关
-	CodePackageNotFound     BizCode = 44001 // 程序包未找到
-	CodePackageSaveFailed   BizCode = 44002 // 程序包保存失败
-	CodePackageRemoveFailed BizCode = 44003 // 程序包删除失败
-
-	// 计划任务相关
-	CodeCronSpecificationInvalid BizCode = 45001 // 计划任务表达式格式错误
 )
 
 var (
@@ -208,16 +179,41 @@ func (c BizCode) IsBusinessError() bool {
 
 // Error 基于当前错误码构建 *Error 实例。
 // 若未传入 msg 或 msg[0] 为空，则自动使用默认文案。
+// 当错误码为服务端内部系统错误 (2xxxx) 时，会自动记录调用栈。
 func (c BizCode) Error(msg ...string) *Error {
+	m := ""
 	if len(msg) > 0 && msg[0] != "" {
-		return New(c, msg[0])
+		m = msg[0]
 	}
-	return New(c, "")
+	return newError(c, m, 1)
 }
 
 // Errorf 基于当前错误码与格式化字符串构建 *Error 实例。
+// 当错误码为服务端内部系统错误 (2xxxx) 时，会自动记录调用栈。
 func (c BizCode) Errorf(format string, args ...any) *Error {
-	return Errorf(c, format, args...)
+	return newError(c, fmt.Sprintf(format, args...), 1)
+}
+
+// ErrorWithStack 基于当前错误码构建显式携带调用栈的 *Error 实例（不论错误码类型）。
+func (c BizCode) ErrorWithStack(msg ...string) *Error {
+	m := ""
+	if len(msg) > 0 && msg[0] != "" {
+		m = msg[0]
+	}
+	err := newError(c, m, 1)
+	if err.stack == nil {
+		err.stack = emperror.WithStackDepth(errors.New(err.Msg), 1)
+	}
+	return err
+}
+
+// ErrorfWithStack 基于当前错误码与格式化字符串构建显式携带调用栈的 *Error 实例。
+func (c BizCode) ErrorfWithStack(format string, args ...any) *Error {
+	err := newError(c, fmt.Sprintf(format, args...), 1)
+	if err.stack == nil {
+		err.stack = emperror.WithStackDepth(errors.New(err.Msg), 1)
+	}
+	return err
 }
 
 // HTTPStatus 获取当前错误码推荐映射的 HTTP 状态码。
@@ -236,13 +232,13 @@ func (c BizCode) HTTPStatus() int {
 		return http.StatusOK
 	case CodeUnauthorized, CodeTokenExpired, CodeTokenInvalid, CodeMissingAuth, CodeTokenTypeMismatch, CodeAuthFailed:
 		return http.StatusUnauthorized
-	case CodeForbidden, CodeAccountLocked, CodeDownloadFilePermissionDenied:
+	case CodeForbidden, CodeAccountLocked:
 		return http.StatusForbidden
-	case CodeResourceNotFound, CodeRecordNotFound, CodeDownloadFileNotFound, CodeZIPFileNotFound, CodeScriptNotFound, CodeScriptLogNotFound, CodePackageNotFound:
+	case CodeResourceNotFound, CodeRecordNotFound:
 		return http.StatusNotFound
 	case CodeMethodNotAllowed:
 		return http.StatusMethodNotAllowed
-	case CodeResourceAlreadyExists, CodeDuplicatedKey, CodeForeignKeyViolated:
+	case CodeResourceAlreadyExists, CodeDuplicatedKey, CodeForeignKeyViolated, CodeOptimisticLockFailed:
 		return http.StatusConflict
 	case CodeRequestBodyTooLarge:
 		return http.StatusRequestEntityTooLarge

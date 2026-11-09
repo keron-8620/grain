@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log"
+	"log/slog"
 	"time"
 
 	"emperror.dev/errors"
@@ -11,19 +12,29 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// Default connection pool parameters used when corresponding DBConf fields are unset (== 0).
+// A negative value (e.g. -1) explicitly disables the limit (passes 0 to database/sql).
+const (
+	DefaultMaxIdleConns    = 10
+	DefaultMaxOpenConns    = 100
+	DefaultConnMaxLifetime = time.Hour
+	DefaultConnMaxIdleTime = 30 * time.Minute
+)
+
 // DBConf database configuration structure for configuring database connection parameters
 type DBConf struct {
 	Type            string        `yaml:"type" json:"type"`                             // Database type, supports mysql, postgres, sqlite, sqlserver, opengauss
 	Dsn             string        `yaml:"dsn" json:"dsn"`                               // Database connection string (DSN)
-	MaxIdleConns    int           `yaml:"max_idle_conns" json:"max_idle_conns"`         // Maximum idle connections
-	MaxOpenConns    int           `yaml:"max_open_conns" json:"max_open_conns"`         // Maximum open connections
+	MaxIdleConns    int           `yaml:"max_idle_conns" json:"max_idle_conns"`         // Maximum idle connections (0 uses DefaultMaxIdleConns; < 0 disables idle connection caching)
+	MaxOpenConns    int           `yaml:"max_open_conns" json:"max_open_conns"`         // Maximum open connections (0 uses DefaultMaxOpenConns; < 0 means unlimited)
 	LogSQL          bool          `yaml:"log_sql" json:"log_sql"`                       // Whether to log SQL
 	SlowThreshold   time.Duration `yaml:"slow_threshold" json:"slow_threshold"`         // Slow query threshold for logging (default 1s)
-	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime" json:"conn_max_lifetime"`   // Maximum connection lifetime (e.g. 1h, 30m; 0 means reuse indefinitely)
-	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time" json:"conn_max_idle_time"` // Maximum connection idle time (e.g. 30m, 5m; 0 means no maximum idle time)
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime" json:"conn_max_lifetime"`   // Maximum connection lifetime (0 uses DefaultConnMaxLifetime; < 0 means reuse indefinitely)
+	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time" json:"conn_max_idle_time"` // Maximum connection idle time (0 uses DefaultConnMaxIdleTime; < 0 means no maximum idle time)
 }
 
 // NewGormConfig creates a gorm configuration with standard log.Logger.
+// Deprecated: Use NewGormConfigWithLogger or NewGormConfigWithSlog instead.
 func NewGormConfig(dbLog *log.Logger) *gorm.Config {
 	var gc gorm.Config
 	gc.SkipDefaultTransaction = false
@@ -33,7 +44,7 @@ func NewGormConfig(dbLog *log.Logger) *gorm.Config {
 		gc.Logger = logger.New(dbLog, logger.Config{
 			SlowThreshold:             time.Second,
 			Colorful:                  false,
-			IgnoreRecordNotFoundError: false,
+			IgnoreRecordNotFoundError: true,
 			ParameterizedQueries:      true,
 			LogLevel:                  logger.Info,
 		})
@@ -49,6 +60,32 @@ func NewGormConfigWithSlog(cfg SlogLoggerConfig) *gorm.Config {
 	gc.TranslateError = true
 	gc.Logger = NewSlogLogger(cfg)
 	return &gc
+}
+
+// NewGormConfigWithLogger creates a gorm configuration backed by SlogLogger using the provided slog.Logger.
+// It sets up query logging based on DBConf settings (slow query threshold and log_sql).
+func NewGormConfigWithLogger(baseLogger *slog.Logger, c *DBConf) *gorm.Config {
+	slowThreshold := time.Second
+	logSQL := false
+	if c != nil {
+		if c.SlowThreshold > 0 {
+			slowThreshold = c.SlowThreshold
+		}
+		logSQL = c.LogSQL
+	}
+
+	logLevel := logger.Warn
+	if logSQL {
+		logLevel = logger.Info
+	}
+
+	return NewGormConfigWithSlog(SlogLoggerConfig{
+		SlowThreshold:             slowThreshold,
+		ParameterizedQueries:      true,
+		IgnoreRecordNotFoundError: true,
+		LogLevel:                  logLevel,
+		BaseLogger:                baseLogger,
+	})
 }
 
 // NewGormDB initializes a GORM database connection using context.Background().
@@ -88,7 +125,6 @@ func NewGormDBContext(ctx context.Context, c *DBConf, gc *gorm.Config) (*gorm.DB
 	cfg := *gc
 
 	// Apply LogSQL setting to configure query logging.
-	// If no logger is configured, default to SlogLogger integrated with pkg/logx.
 	slowThreshold := c.SlowThreshold
 	if slowThreshold <= 0 {
 		slowThreshold = time.Second
@@ -102,19 +138,19 @@ func NewGormDBContext(ctx context.Context, c *DBConf, gc *gorm.Config) (*gorm.DB
 		cfg.Logger = NewSlogLogger(SlogLoggerConfig{
 			SlowThreshold:             slowThreshold,
 			ParameterizedQueries:      true,
-			IgnoreRecordNotFoundError: false,
+			IgnoreRecordNotFoundError: true,
 			LogLevel:                  slogLevel,
 		})
 	} else if c.LogSQL {
 		cfg.Logger = cfg.Logger.LogMode(logger.Info)
-	} else {
-		cfg.Logger = cfg.Logger.LogMode(logger.Warn)
+	} else if sl, ok := cfg.Logger.(*SlogLogger); ok && sl.Config.LogLevel == 0 {
+		cfg.Logger = sl.LogMode(logger.Warn)
 	}
 
 	// Lookup driver factory from registry
 	driverFn, ok := GetDriver(c.Type)
 	if !ok {
-		return nil, errors.NewWithDetails("unsupported database driver type", "type", c.Type, "registered", RegisteredDrivers())
+		return nil, errors.WrapWithDetails(ErrUnsupportedDriver, "unsupported database driver type", "type", c.Type, "registered", RegisteredDrivers())
 	}
 
 	dialector := driverFn(c.Dsn)
@@ -122,7 +158,7 @@ func NewGormDBContext(ctx context.Context, c *DBConf, gc *gorm.Config) (*gorm.DB
 
 	// If database connection open failed, return error
 	if openErr != nil {
-		return nil, errors.Wrap(openErr, "failed to open database connection")
+		return nil, errors.Wrap(MapError(openErr), "failed to open database connection")
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -134,13 +170,40 @@ func NewGormDBContext(ctx context.Context, c *DBConf, gc *gorm.Config) (*gorm.DB
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get database connection")
+		return nil, errors.Wrap(MapError(err), "failed to get database connection")
 	}
-	// Set connection pool parameters
-	sqlDB.SetMaxIdleConns(c.MaxIdleConns)       // Maximum idle connections
-	sqlDB.SetMaxOpenConns(c.MaxOpenConns)       // Maximum open connections
-	sqlDB.SetConnMaxLifetime(c.ConnMaxLifetime) // Maximum connection lifetime
-	sqlDB.SetConnMaxIdleTime(c.ConnMaxIdleTime) // Maximum connection idle time
+	// Set connection pool parameters.
+	// When values are 0 (unset), apply sensible defaults.
+	// When values are negative (e.g. -1), pass 0 to database/sql to explicitly disable the limit/caching.
+	maxIdleConns := c.MaxIdleConns
+	if maxIdleConns == 0 {
+		maxIdleConns = DefaultMaxIdleConns
+	} else if maxIdleConns < 0 {
+		maxIdleConns = 0
+	}
+	maxOpenConns := c.MaxOpenConns
+	if maxOpenConns == 0 {
+		maxOpenConns = DefaultMaxOpenConns
+	} else if maxOpenConns < 0 {
+		maxOpenConns = 0
+	}
+	connMaxLifetime := c.ConnMaxLifetime
+	if connMaxLifetime == 0 {
+		connMaxLifetime = DefaultConnMaxLifetime
+	} else if connMaxLifetime < 0 {
+		connMaxLifetime = 0
+	}
+	connMaxIdleTime := c.ConnMaxIdleTime
+	if connMaxIdleTime == 0 {
+		connMaxIdleTime = DefaultConnMaxIdleTime
+	} else if connMaxIdleTime < 0 {
+		connMaxIdleTime = 0
+	}
+
+	sqlDB.SetMaxIdleConns(maxIdleConns)       // Maximum idle connections
+	sqlDB.SetMaxOpenConns(maxOpenConns)       // Maximum open connections
+	sqlDB.SetConnMaxLifetime(connMaxLifetime) // Maximum connection lifetime
+	sqlDB.SetConnMaxIdleTime(connMaxIdleTime) // Maximum connection idle time
 
 	// Perform health check ping with retries on startup to avoid lazy connection issues.
 	if err := pingWithRetry(ctx, sqlDB, 3); err != nil {

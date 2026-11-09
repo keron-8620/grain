@@ -4,9 +4,16 @@ import (
 	"context"
 	"crypto"
 	"fmt"
+	"strings"
+	"time"
 
+	"emperror.dev/errors"
 	"github.com/golang-jwt/jwt/v5"
+	"grain/pkg/cryptoutil"
 )
+
+// DefaultLeeway is the default clock skew tolerance duration for JWT validation (exp, nbf, iat).
+const DefaultLeeway = 1 * time.Minute
 
 // JWT verification
 type JWTConfig struct {
@@ -18,15 +25,16 @@ type JWTConfig struct {
 	publicKey crypto.PublicKey
 	// method is the signing algorithm (e.g., jwt.SigningMethodRS256).
 	method jwt.SigningMethod
+	// leeway specifies the duration of clock skew tolerance for validation (e.g. exp, nbf, iat).
+	leeway time.Duration
 }
 
-// NewJWTConfig creates and validates a new JWT configuration.
-// It ensures that issuer, token type, signing method (asymmetric only),
-// private key type/strength, and expiration are all valid.
+// NewJWTConfig creates a new JWT configuration used for token verification.
+// By default, it sets leeway to DefaultLeeway (1 minute) to account for clock skew.
 func NewJWTConfig(
 	issuer string,
 	audience string,
-	publicKey crypto.PrivateKey,
+	publicKey crypto.PublicKey,
 	method jwt.SigningMethod,
 ) JWTConfig {
 	return JWTConfig{
@@ -34,7 +42,43 @@ func NewJWTConfig(
 		audience:  audience,
 		publicKey: publicKey,
 		method:    method,
+		leeway:    DefaultLeeway,
 	}
+}
+
+// WithLeeway returns a copy of JWTConfig with the specified clock skew tolerance.
+// A negative duration is normalized to 0 (no clock skew tolerance).
+func (c JWTConfig) WithLeeway(leeway time.Duration) JWTConfig {
+	if leeway < 0 {
+		leeway = 0
+	}
+	c.leeway = leeway
+	return c
+}
+
+// Leeway returns the configured clock skew leeway duration.
+func (c JWTConfig) Leeway() time.Duration {
+	return c.leeway
+}
+
+// Issuer returns the configured token issuer.
+func (c JWTConfig) Issuer() string {
+	return c.issuer
+}
+
+// Audience returns the configured token audience.
+func (c JWTConfig) Audience() string {
+	return c.audience
+}
+
+// PublicKey returns the configured verification public key.
+func (c JWTConfig) PublicKey() crypto.PublicKey {
+	return c.publicKey
+}
+
+// Method returns the configured token signing method.
+func (c JWTConfig) Method() jwt.SigningMethod {
+	return c.method
 }
 
 // TokenType defines the purpose type of a JWT token
@@ -51,16 +95,30 @@ type jwtClaimsContextKey struct{}
 
 // UserInfo represents the user payload contract carried by JWTs issued by IAM (shared across the system)
 type UserInfo struct {
-	UserID       uint32 `json:"uid"` // Unique user ID
+	UserID       uint64 `json:"uid"` // Unique user ID
 	Username     string `json:"un"`  // Username
-	RoleID       uint32 `json:"rid"` // Role ID
+	RoleID       uint64 `json:"rid"` // Role ID
 	IsStaff      bool   `json:"isf"` // Whether the user is internal staff
 	TokenVersion uint64 `json:"tv"`  // User token revocation version
 }
 
 // UserTokenVersionKey generates the user token version key in Redis
-func UserTokenVersionKey(userID uint32) string {
+func UserTokenVersionKey(userID uint64) string {
 	return fmt.Sprintf("iam:user-token-version:%d", userID)
+}
+
+// FamilyRevocationKey generates the Redis key used to record a revoked session family (fid).
+func FamilyRevocationKey(familyID string) string {
+	return fmt.Sprintf("iam:revoked-family:%s", strings.TrimSpace(familyID))
+}
+
+// GenerateFamilyID generates a cryptographically secure random session family ID (hex encoded 16 bytes).
+func GenerateFamilyID() (string, error) {
+	id, err := cryptoutil.GenerateRandomHex(16)
+	if err != nil {
+		return "", errors.WrapIf(err, "failed to generate random family ID")
+	}
+	return id, nil
 }
 
 // JwtClaims is the system-wide standard JWT claims contract struct
@@ -78,15 +136,15 @@ type JwtClaims struct {
 // GetJwtClaims retrieves JwtClaims from a context.Context
 func GetJwtClaims(ctx context.Context) (*JwtClaims, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("context is nil")
+		return nil, errors.New("context is nil")
 	}
 	val := ctx.Value(jwtClaimsContextKey{})
 	if val == nil {
-		return nil, fmt.Errorf("claims not found in context")
+		return nil, errors.New("claims not found in context")
 	}
 	claims, ok := val.(*JwtClaims)
 	if !ok {
-		return nil, fmt.Errorf("invalid JWT claims type in context")
+		return nil, errors.New("invalid JWT claims type in context")
 	}
 	return claims, nil
 }

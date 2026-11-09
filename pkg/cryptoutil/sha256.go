@@ -1,39 +1,83 @@
 package cryptoutil
 
 import (
-	"context"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
+	"strings"
 
 	"emperror.dev/errors"
 )
 
-// SHA256Hasher SHA-256 hash implementation
+// SHA256Hasher implements Hasher for SHA-256.
 type SHA256Hasher struct{}
 
-func NewSHA256Hasher() Hasher {
+// NewSHA256Hasher creates a SHA256Hasher instance.
+func NewSHA256Hasher() *SHA256Hasher {
 	return &SHA256Hasher{}
 }
 
-func (h *SHA256Hasher) Hash(ctx context.Context, data string) (string, error) {
-	// Check if context is cancelled
-	if ctx.Err() != nil {
-		return "", errors.WrapIf(ctx.Err(), "context cancelled")
-	}
-
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:]), nil
+// Hash computes the SHA-256 digest of input data.
+func (h *SHA256Hasher) Hash(data []byte) ([]byte, error) {
+	digest := sha256.Sum256(data)
+	return digest[:], nil
 }
 
-func (h *SHA256Hasher) Verify(ctx context.Context, data, hash string) (bool, error) {
-	// Check if context is cancelled
-	if ctx.Err() != nil {
-		return false, errors.WrapIf(ctx.Err(), "context cancelled")
-	}
-
-	computedHash, err := h.Hash(ctx, data)
+// Verify checks whether data matches the expected SHA-256 digest bytes in constant time.
+func (h *SHA256Hasher) Verify(data, expectedHash []byte) (bool, error) {
+	actualHash, err := h.Hash(data)
 	if err != nil {
-		return false, errors.WrapIf(err, "failed to verify hash")
+		return false, err
 	}
-	return SafeEqual(computedHash, hash), nil
+	return subtle.ConstantTimeCompare(actualHash, expectedHash) == 1, nil
+}
+
+// HashString computes the SHA-256 digest and returns a lower-case hexadecimal string.
+func (h *SHA256Hasher) HashString(data string) (string, error) {
+	return h.HashHex(data)
+}
+
+// HashHex computes the SHA-256 digest and returns a lower-case hexadecimal string.
+func (h *SHA256Hasher) HashHex(data string) (string, error) {
+	digest, err := h.Hash([]byte(data))
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest), nil
+}
+
+// HashBase64 computes the SHA-256 digest and returns a standard base64 string.
+func (h *SHA256Hasher) HashBase64(data string) (string, error) {
+	digest, err := h.Hash([]byte(data))
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(digest), nil
+}
+
+// VerifyString checks whether data matches a hex-encoded SHA-256 string (case-insensitive).
+func (h *SHA256Hasher) VerifyString(data, expectedHex string) (bool, error) {
+	return h.VerifyHex(data, expectedHex)
+}
+
+// VerifyHex checks whether data matches a hex-encoded SHA-256 string (case-insensitive).
+func (h *SHA256Hasher) VerifyHex(data, expectedHex string) (bool, error) {
+	expectedBytes, err := hex.DecodeString(strings.TrimSpace(expectedHex))
+	if err != nil {
+		return false, errors.WrapIf(err, "invalid hex format in expected hash")
+	}
+	return h.Verify([]byte(data), expectedBytes)
+}
+
+// VerifyBase64 checks whether data matches a base64-encoded SHA-256 string.
+func (h *SHA256Hasher) VerifyBase64(data, expectedBase64 string) (bool, error) {
+	expectedBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(expectedBase64))
+	if err != nil {
+		expectedBytes, err = base64.RawStdEncoding.DecodeString(strings.TrimSpace(expectedBase64))
+		if err != nil {
+			return false, errors.WrapIf(err, "invalid base64 format in expected hash")
+		}
+	}
+	return h.Verify([]byte(data), expectedBytes)
 }

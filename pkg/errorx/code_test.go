@@ -36,7 +36,6 @@ func TestBizCode_Basics(t *testing.T) {
 	assert.True(t, CodeBusinessError.IsBusinessError())
 	assert.True(t, CodePreconditionFailed.IsBusinessError())
 	assert.True(t, CodeRecordNotFound.IsBusinessError())
-	assert.True(t, CodeCronSpecificationInvalid.IsBusinessError())
 	assert.False(t, CodeInvalidParam.IsBusinessError())
 }
 
@@ -73,11 +72,11 @@ func TestBizCode_HTTPStatusMapping(t *testing.T) {
 		{CodeAccountLocked, http.StatusForbidden},
 		{CodeResourceNotFound, http.StatusNotFound},
 		{CodeRecordNotFound, http.StatusNotFound},
-		{CodeDownloadFileNotFound, http.StatusNotFound},
 		{CodeMethodNotAllowed, http.StatusMethodNotAllowed},
 		{CodeResourceAlreadyExists, http.StatusConflict},
 		{CodeDuplicatedKey, http.StatusConflict},
 		{CodeForeignKeyViolated, http.StatusConflict},
+		{CodeOptimisticLockFailed, http.StatusConflict},
 		{CodeRequestBodyTooLarge, http.StatusRequestEntityTooLarge},
 		{CodeUnsupportedMediaType, http.StatusUnsupportedMediaType},
 		{CodeTooManyRequests, http.StatusTooManyRequests},
@@ -141,5 +140,4 @@ func TestNewBizCodes_Messages(t *testing.T) {
 	assert.Equal(t, "记录未找到", CodeRecordNotFound.Message())
 	assert.Equal(t, "唯一性约束冲突", CodeDuplicatedKey.Message())
 	assert.Equal(t, "SSH连接失败", CodeSSHConnectionFailed.Message())
-	assert.Equal(t, "计划任务表达式格式错误", CodeCronSpecificationInvalid.Message())
 }

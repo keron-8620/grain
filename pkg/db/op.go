@@ -3,11 +3,82 @@ package db
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"emperror.dev/errors"
 	"gorm.io/gorm"
 )
+
+type dbOpTraceKey struct{}
+
+// dbOpTraceState coordinates between RunDBOp and SlogLogger.Trace within a single operation
+// to prevent duplicate error/slow-query log entries while preserving SQL statement context.
+type dbOpTraceState struct {
+	mu           sync.Mutex
+	sql          string
+	rows         int64
+	hasSQL       bool
+	hasErr       bool
+	maxElapsed   time.Duration
+	queriesCount int
+}
+
+func hasDBOpTrace(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	_, ok := ctx.Value(dbOpTraceKey{}).(*dbOpTraceState)
+	return ok
+}
+
+func (s *dbOpTraceState) record(sql string, rows int64, elapsed time.Duration, force bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.queriesCount++
+	if force {
+		if !s.hasErr {
+			s.sql = sql
+			s.rows = rows
+			s.hasSQL = true
+			s.hasErr = true
+		}
+		if elapsed > s.maxElapsed {
+			s.maxElapsed = elapsed
+		}
+		return
+	}
+	if s.hasErr {
+		if elapsed > s.maxElapsed {
+			s.maxElapsed = elapsed
+		}
+		return
+	}
+	if !s.hasSQL || elapsed >= s.maxElapsed {
+		s.sql = sql
+		s.rows = rows
+		s.hasSQL = true
+		if elapsed > s.maxElapsed {
+			s.maxElapsed = elapsed
+		}
+	}
+}
+
+func (s *dbOpTraceState) appendAttrs(attrs []slog.Attr) []slog.Attr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hasSQL {
+		return attrs
+	}
+	if s.queriesCount > 1 {
+		attrs = append(attrs, slog.Int("queries_count", s.queriesCount))
+	}
+	attrs = append(attrs, slog.String("sql", s.sql))
+	if s.rows != -1 {
+		attrs = append(attrs, slog.Int64("rows", s.rows))
+	}
+	return attrs
+}
 
 // DBTimeout holds database operation timeout parameters.
 type DBTimeout struct {
@@ -40,7 +111,7 @@ const defaultDBOpTimeout = 5 * time.Second
 // defaultSlowThreshold is the fallback slow-query threshold; it only controls log verbosity.
 const defaultSlowThreshold = time.Second
 
-func (k DBOpKind) timeout(t *DBTimeout) time.Duration {
+func (k DBOpKind) Timeout(t *DBTimeout) time.Duration {
 	if t == nil {
 		return defaultDBOpTimeout
 	}
@@ -59,7 +130,7 @@ func (k DBOpKind) timeout(t *DBTimeout) time.Duration {
 	return configured
 }
 
-func (k DBOpKind) slowThreshold(t *DBSlowThreshold) time.Duration {
+func (k DBOpKind) SlowThreshold(t *DBSlowThreshold) time.Duration {
 	if t == nil {
 		return defaultSlowThreshold
 	}
@@ -78,7 +149,7 @@ func (k DBOpKind) slowThreshold(t *DBSlowThreshold) time.Duration {
 	return configured
 }
 
-func (k DBOpKind) label() string {
+func (k DBOpKind) Label() string {
 	switch k {
 	case OpWrite:
 		return "write"
@@ -103,12 +174,22 @@ func RunDBOp(
 	fn func(context.Context) error,
 	attrs ...slog.Attr,
 ) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 	startTime := time.Now()
+	slowThreshold := kind.SlowThreshold(slow)
+	traceState := &dbOpTraceState{
+		rows: -1,
+	}
 
-	dbCtx, cancel := context.WithTimeout(ctx, kind.timeout(timeouts))
+	dbCtx, cancel := context.WithTimeout(
+		context.WithValue(ctx, dbOpTraceKey{}, traceState),
+		kind.Timeout(timeouts),
+	)
 	defer cancel()
 
 	opStart := time.Now()
@@ -116,13 +197,15 @@ func RunDBOp(
 	opDuration := time.Since(opStart)
 
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		err = MapError(err)
+		if errors.Is(err, ErrRecordNotFound) || errors.Is(err, gorm.ErrRecordNotFound) {
 			if logger.Enabled(ctx, slog.LevelDebug) {
-				logAttrs := make([]slog.Attr, 0, 2+len(attrs))
+				logAttrs := make([]slog.Attr, 0, 4+len(attrs))
 				logAttrs = append(logAttrs,
-					slog.String("op_kind", kind.label()),
+					slog.String("op_kind", kind.Label()),
 					slog.Duration("op_duration", opDuration),
 				)
+				logAttrs = traceState.appendAttrs(logAttrs)
 				logAttrs = append(logAttrs, attrs...)
 				logger.LogAttrs(
 					ctx,
@@ -133,13 +216,14 @@ func RunDBOp(
 			}
 			return err
 		}
-		logAttrs := make([]slog.Attr, 0, 4+len(attrs))
+		logAttrs := make([]slog.Attr, 0, 6+len(attrs))
 		logAttrs = append(logAttrs,
 			slog.Any("error", err),
-			slog.String("op_kind", kind.label()),
+			slog.String("op_kind", kind.Label()),
 			slog.Duration("op_duration", opDuration),
 			slog.Duration("total_duration", time.Since(startTime)),
 		)
+		logAttrs = traceState.appendAttrs(logAttrs)
 		logAttrs = append(logAttrs, attrs...)
 		logger.LogAttrs(
 			ctx,
@@ -149,13 +233,14 @@ func RunDBOp(
 		)
 		return errors.WrapIf(err, op+": database operation failed")
 	}
-	if opDuration > kind.slowThreshold(slow) {
-		logAttrs := make([]slog.Attr, 0, 3+len(attrs))
+	if opDuration > slowThreshold {
+		logAttrs := make([]slog.Attr, 0, 5+len(attrs))
 		logAttrs = append(logAttrs,
-			slog.String("op_kind", kind.label()),
+			slog.String("op_kind", kind.Label()),
 			slog.Duration("op_duration", opDuration),
-			slog.Duration("threshold", kind.slowThreshold(slow)),
+			slog.Duration("threshold", slowThreshold),
 		)
+		logAttrs = traceState.appendAttrs(logAttrs)
 		logAttrs = append(logAttrs, attrs...)
 		logger.LogAttrs(
 			ctx,

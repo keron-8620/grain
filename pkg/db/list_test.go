@@ -141,7 +141,7 @@ func TestValidateListFilters(t *testing.T) {
 
 	t.Run("unsupported field type in declaration returns error", func(t *testing.T) {
 		badFields := []ListFilterField{
-			{Name: "data", Type: ListFilterType("float"), Ops: []ListFilterOp{ListFilterEquals}},
+			{Name: "data", Type: ListFilterType("unknown_custom_type"), Ops: []ListFilterOp{ListFilterEquals}},
 		}
 		filters := []ListFilter{
 			{Field: "data", Op: ListFilterEquals, Value: 3.14},
@@ -184,13 +184,13 @@ func TestApplyListFilters(t *testing.T) {
 	}
 
 	t.Run("nil db returns error", func(t *testing.T) {
-		_, err := ApplyListFilters(nil, []ListFilter{{Field: "title", Op: ListFilterEquals, Value: "test"}})
+		_, err := applyListFilters(nil, []ListFilter{{Field: "title", Op: ListFilterEquals, Value: "test"}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "database instance is nil")
 	})
 
 	t.Run("empty filters returns unmodified db", func(t *testing.T) {
-		resDB, err := ApplyListFilters(db, nil)
+		resDB, err := applyListFilters(db, nil)
 		require.NoError(t, err)
 		assert.NotNil(t, resDB)
 	})
@@ -200,7 +200,7 @@ func TestApplyListFilters(t *testing.T) {
 			{Field: "title", Op: ListFilterContains, Value: "Fruit"},
 			{Field: "is_active", Op: ListFilterEquals, Value: true},
 		}
-		q, err := ApplyListFilters(db.Model(&TestItem{}), filters)
+		q, err := applyListFilters(db.Model(&TestItem{}), filters)
 		require.NoError(t, err)
 
 		var results []TestItem
@@ -213,7 +213,7 @@ func TestApplyListFilters(t *testing.T) {
 			{Field: "score", Op: ListFilterGreaterEquals, Value: 80},
 			{Field: "score", Op: ListFilterLessThan, Value: 90},
 		}
-		q, err := ApplyListFilters(db.Model(&TestItem{}), filters)
+		q, err := applyListFilters(db.Model(&TestItem{}), filters)
 		require.NoError(t, err)
 
 		var results []TestItem
@@ -227,7 +227,7 @@ func TestApplyListFilters(t *testing.T) {
 			{Field: "score", Op: ListFilterNotEquals, Value: 90},
 			{Field: "score", Op: ListFilterGreaterThan, Value: 65},
 		}
-		q, err := ApplyListFilters(db.Model(&TestItem{}), filters)
+		q, err := applyListFilters(db.Model(&TestItem{}), filters)
 		require.NoError(t, err)
 
 		var results []TestItem
@@ -240,7 +240,7 @@ func TestApplyListFilters(t *testing.T) {
 		filters := []ListFilter{
 			{Field: "score", Op: ListFilterLessEquals, Value: 60},
 		}
-		q, err := ApplyListFilters(db.Model(&TestItem{}), filters)
+		q, err := applyListFilters(db.Model(&TestItem{}), filters)
 		require.NoError(t, err)
 
 		var results []TestItem
@@ -259,7 +259,7 @@ func TestApplyListFilters(t *testing.T) {
 		filters := []ListFilter{
 			{Field: "title", Op: ListFilterContains, Value: "50%"},
 		}
-		q, err := ApplyListFilters(db.Model(&TestItem{}), filters)
+		q, err := applyListFilters(db.Model(&TestItem{}), filters)
 		require.NoError(t, err)
 
 		var results []TestItem
@@ -271,7 +271,7 @@ func TestApplyListFilters(t *testing.T) {
 		filters = []ListFilter{
 			{Field: "title", Op: ListFilterContains, Value: "_underscore_"},
 		}
-		q, err = ApplyListFilters(db.Model(&TestItem{}), filters)
+		q, err = applyListFilters(db.Model(&TestItem{}), filters)
 		require.NoError(t, err)
 
 		results = nil
@@ -284,7 +284,7 @@ func TestApplyListFilters(t *testing.T) {
 		filters := []ListFilter{
 			{Field: "title; DROP TABLE users;--", Op: ListFilterEquals, Value: "test"},
 		}
-		_, err := ApplyListFilters(db.Model(&TestItem{}), filters)
+		_, err := applyListFilters(db.Model(&TestItem{}), filters)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrInvalidListOption)
 		assert.Contains(t, err.Error(), "invalid field name")
@@ -294,16 +294,61 @@ func TestApplyListFilters(t *testing.T) {
 		filters := []ListFilter{
 			{Field: "", Op: ListFilterEquals, Value: "test"},
 		}
-		_, err := ApplyListFilters(db.Model(&TestItem{}), filters)
+		_, err := applyListFilters(db.Model(&TestItem{}), filters)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrInvalidListOption)
 	})
 
+	t.Run("apply in, not in, is null, and is not null operators", func(t *testing.T) {
+		qIn, err := applyListFilters(db.Model(&TestItem{}), []ListFilter{
+			{Field: "score", Op: ListFilterIn, Value: []int{80, 90}},
+		})
+		require.NoError(t, err)
+		var resIn []TestItem
+		require.NoError(t, qIn.Find(&resIn).Error)
+		assert.Len(t, resIn, 2)
+
+		qNotIn, err := applyListFilters(db.Model(&TestItem{}), []ListFilter{
+			{Field: "score", Op: ListFilterNotIn, Value: []int{80, 90}},
+		})
+		require.NoError(t, err)
+		var resNotIn []TestItem
+		require.NoError(t, qNotIn.Find(&resNotIn).Error)
+		assert.GreaterOrEqual(t, len(resNotIn), 1)
+
+		qNotNull, err := applyListFilters(db.Model(&TestItem{}), []ListFilter{
+			{Field: "title", Op: ListFilterIsNotNull},
+		})
+		require.NoError(t, err)
+		var resNotNull []TestItem
+		require.NoError(t, qNotNull.Find(&resNotNull).Error)
+		assert.NotEmpty(t, resNotNull)
+
+		qNull, err := applyListFilters(db.Model(&TestItem{}), []ListFilter{
+			{Field: "title", Op: ListFilterIsNull},
+		})
+		require.NoError(t, err)
+		var resNull []TestItem
+		require.NoError(t, qNull.Find(&resNull).Error)
+		assert.Empty(t, resNull)
+
+		// Empty slice or nil on IN/NOT IN returns error
+		_, err = applyListFilters(db.Model(&TestItem{}), []ListFilter{
+			{Field: "score", Op: ListFilterIn, Value: []int{}},
+		})
+		require.ErrorIs(t, err, ErrInvalidListOption)
+
+		_, err = applyListFilters(db.Model(&TestItem{}), []ListFilter{
+			{Field: "score", Op: ListFilterNotIn, Value: nil},
+		})
+		require.ErrorIs(t, err, ErrInvalidListOption)
+	})
+
 	t.Run("unsupported operator returns error", func(t *testing.T) {
 		filters := []ListFilter{
-			{Field: "score", Op: ListFilterOp("IN"), Value: []int{80, 90}},
+			{Field: "score", Op: ListFilterOp("UNKNOWN_OP"), Value: []int{80, 90}},
 		}
-		_, err := ApplyListFilters(db.Model(&TestItem{}), filters)
+		_, err := applyListFilters(db.Model(&TestItem{}), filters)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrInvalidListOption)
 		assert.Contains(t, err.Error(), "unsupported filter operator")
@@ -313,10 +358,10 @@ func TestApplyListFilters(t *testing.T) {
 func TestEscapeLikePattern(t *testing.T) {
 	assert.Equal(t, "", EscapeLikePattern(""))
 	assert.Equal(t, "normal text", EscapeLikePattern("normal text"))
-	assert.Equal(t, `100\% discount`, EscapeLikePattern("100% discount"))
-	assert.Equal(t, `user\_name`, EscapeLikePattern("user_name"))
-	assert.Equal(t, `path\\to\\file`, EscapeLikePattern(`path\to\file`))
-	assert.Equal(t, `\%mixed\\pattern\_100\%\%`, EscapeLikePattern(`%mixed\pattern_100%%`))
+	assert.Equal(t, `100!% discount`, EscapeLikePattern("100% discount"))
+	assert.Equal(t, `user!_name`, EscapeLikePattern("user_name"))
+	assert.Equal(t, `alert!!now`, EscapeLikePattern(`alert!now`))
+	assert.Equal(t, `!%mixed!!pattern!_100!%!%`, EscapeLikePattern(`%mixed!pattern_100%%`))
 }
 
 // -------------------- Page2LimitOffset Tests --------------------
@@ -347,4 +392,99 @@ func TestPage2LimitOffset(t *testing.T) {
 			assert.Equal(t, tt.wantOffset, gotOffset, "offset mismatch")
 		})
 	}
+}
+
+func TestValidateListOptions(t *testing.T) {
+	t.Run("valid options", func(t *testing.T) {
+		assert.NoError(t, ValidateListOptions(0, 10))
+		assert.NoError(t, ValidateListOptions(100, MaxPageSize))
+		assert.NoError(t, ValidateListOptions(0, 1))
+	})
+
+	t.Run("negative offset returns ErrInvalidListOption", func(t *testing.T) {
+		err := ValidateListOptions(-1, 20)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+		assert.Contains(t, err.Error(), "offset must be non-negative")
+	})
+
+	t.Run("zero or negative page_size returns ErrInvalidListOption", func(t *testing.T) {
+		err := ValidateListOptions(0, 0)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+		assert.Contains(t, err.Error(), "page_size must be positive")
+
+		err = ValidateListOptions(0, -5)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+	})
+
+	t.Run("page_size exceeding MaxPageSize returns ErrInvalidListOption", func(t *testing.T) {
+		err := ValidateListOptions(0, MaxPageSize+1)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+		assert.Contains(t, err.Error(), "page_size cannot exceed")
+	})
+}
+
+func TestSanitizeOrderBy(t *testing.T) {
+	allowed := NewColumnSet("id", "username", "created_at", "age")
+
+	t.Run("empty string returns empty", func(t *testing.T) {
+		res, err := SanitizeOrderBy("", allowed)
+		require.NoError(t, err)
+		assert.Equal(t, "", res)
+
+		res, err = SanitizeOrderBy("   ", allowed)
+		require.NoError(t, err)
+		assert.Equal(t, "", res)
+	})
+
+	t.Run("single clause standard", func(t *testing.T) {
+		res, err := SanitizeOrderBy("created_at asc", allowed)
+		require.NoError(t, err)
+		assert.Equal(t, "created_at ASC", res)
+
+		res, err = SanitizeOrderBy("id desc", allowed)
+		require.NoError(t, err)
+		assert.Equal(t, "id DESC", res)
+	})
+
+	t.Run("leading minus for descending", func(t *testing.T) {
+		res, err := SanitizeOrderBy("-created_at", allowed)
+		require.NoError(t, err)
+		assert.Equal(t, "created_at DESC", res)
+	})
+
+	t.Run("multi-clause with mixed syntax", func(t *testing.T) {
+		res, err := SanitizeOrderBy("-created_at, username asc, id", allowed)
+		require.NoError(t, err)
+		assert.Equal(t, "created_at DESC, username ASC, id ASC", res)
+	})
+
+	t.Run("unsupported column returns error", func(t *testing.T) {
+		_, err := SanitizeOrderBy("password asc", allowed)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+		assert.Contains(t, err.Error(), "not sortable")
+	})
+
+	t.Run("conflicting direction returns error", func(t *testing.T) {
+		_, err := SanitizeOrderBy("-created_at asc", allowed)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+		assert.Contains(t, err.Error(), "conflicting order direction")
+	})
+
+	t.Run("invalid direction token returns error", func(t *testing.T) {
+		_, err := SanitizeOrderBy("created_at invalid", allowed)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+	})
+
+	t.Run("sql injection attempt returns error", func(t *testing.T) {
+		_, err := SanitizeOrderBy("created_at; DROP TABLE users", allowed)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidListOption)
+	})
 }

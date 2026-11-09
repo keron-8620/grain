@@ -72,6 +72,16 @@ func TestCleanSQLComments_MultiLineComment(t *testing.T) {
 			input:    "SELECT * /*\ncomment\n*/ FROM users",
 			expected: "SELECT *  FROM users",
 		},
+		{
+			name:     "unclosed multiline comment at end does not leak trailing byte",
+			input:    "SELECT * FROM users /* unclosed comment",
+			expected: "SELECT * FROM users",
+		},
+		{
+			name:     "unclosed multiline comment with single trailing char",
+			input:    "/*x",
+			expected: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -135,6 +145,16 @@ func TestCleanSQLComments_StringProtection(t *testing.T) {
 			input:    "SELECT * FROM users WHERE id = $1 -- real comment",
 			expected: "SELECT * FROM users WHERE id = $1",
 		},
+		{
+			name:     "double quoted identifier preserves comment markers and escaped quotes",
+			input:    `SELECT "col--1", "col""/*2*/" FROM "tbl#3" -- real comment`,
+			expected: `SELECT "col--1", "col""/*2*/" FROM "tbl#3"`,
+		},
+		{
+			name:     "backtick quoted identifier preserves comment markers and escaped backticks",
+			input:    "SELECT `col//1`, `col``#2` FROM `tbl--3` # real comment",
+			expected: "SELECT `col//1`, `col``#2` FROM `tbl--3`",
+		},
 	}
 
 	for _, tt := range tests {
@@ -192,6 +212,16 @@ func TestSplitSQL(t *testing.T) {
 			name:     "positional parameter followed by semicolon",
 			input:    `SELECT * FROM users WHERE id = $1; SELECT * FROM posts`,
 			expected: []string{`SELECT * FROM users WHERE id = $1`, "SELECT * FROM posts"},
+		},
+		{
+			name:     "double quoted identifier containing semicolon and escaped quotes",
+			input:    `SELECT "col;1", "col"";2", "col\;3" FROM users; SELECT * FROM posts`,
+			expected: []string{`SELECT "col;1", "col"";2", "col\;3" FROM users`, "SELECT * FROM posts"},
+		},
+		{
+			name:     "backtick quoted identifier containing semicolon and escaped backticks",
+			input:    "SELECT `col;1`, `col``;2` FROM users; SELECT * FROM posts",
+			expected: []string{"SELECT `col;1`, `col``;2` FROM users", "SELECT * FROM posts"},
 		},
 		{
 			name:     "empty statements",
@@ -509,5 +539,24 @@ SYNTAX ERROR WILL FAIL HERE;
 	}
 	if count != 0 {
 		t.Errorf("expected table rollback_check to be rolled back, but found count=%d", count)
+	}
+}
+
+func TestExecSQLFile_CanceledContext(t *testing.T) {
+	c := &DBConf{
+		Type: "sqlite",
+		Dsn:  ":memory:",
+	}
+	db, err := NewGormDB(c, NewGormConfig(nil))
+	if err != nil {
+		t.Fatalf("failed to create test DB: %v", err)
+	}
+	defer func() { _ = CloseGormDB(db) }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := ExecSQLFile(ctx, db, "nonexistent.sql"); err == nil {
+		t.Fatal("expected error for canceled context, got nil")
 	}
 }

@@ -15,28 +15,34 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
-type testLoggerKey struct{}
+type testTraceKey struct{}
+
+type testContextHandler struct {
+	slog.Handler
+}
+
+func (h *testContextHandler) Handle(ctx context.Context, r slog.Record) error {
+	if v, ok := ctx.Value(testTraceKey{}).(string); ok && v != "" {
+		r.AddAttrs(slog.String("trace_id", v))
+	}
+	return h.Handler.Handle(ctx, r)
+}
 
 func newTestLogger(buf *bytes.Buffer) *slog.Logger {
-	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{
+	h := slog.NewTextHandler(buf, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
-	}))
+	})
+	return slog.New(&testContextHandler{Handler: h})
 }
 
 func TestSlogLogger_ContextLogger(t *testing.T) {
 	buf := &bytes.Buffer{}
-	ctxLogger := newTestLogger(buf).With(slog.String("trace_id", "trace-xyz-789"))
-
-	ctx := context.WithValue(context.Background(), testLoggerKey{}, ctxLogger)
+	baseLogger := newTestLogger(buf)
+	ctx := context.WithValue(context.Background(), testTraceKey{}, "trace-xyz-789")
 
 	sl := NewSlogLogger(SlogLoggerConfig{
-		LogLevel: gormlogger.Info,
-		GetLogger: func(c context.Context) *slog.Logger {
-			if l, ok := c.Value(testLoggerKey{}).(*slog.Logger); ok {
-				return l
-			}
-			return nil
-		},
+		LogLevel:   gormlogger.Info,
+		BaseLogger: baseLogger,
 	})
 
 	sl.Trace(ctx, time.Now().Add(-10*time.Millisecond), func() (string, int64) {
@@ -57,9 +63,6 @@ func TestSlogLogger_FallbackToBaseLogger(t *testing.T) {
 	sl := NewSlogLogger(SlogLoggerConfig{
 		LogLevel:   gormlogger.Info,
 		BaseLogger: baseLogger,
-		GetLogger: func(c context.Context) *slog.Logger {
-			return nil
-		},
 	})
 
 	sl.Trace(context.Background(), time.Now().Add(-10*time.Millisecond), func() (string, int64) {
@@ -249,7 +252,7 @@ func TestSlogLogger_WithGormExecution(t *testing.T) {
 	}()
 
 	type DemoUser struct {
-		ID   uint   `gorm:"primaryKey"`
+		ID   uint `gorm:"primaryKey"`
 		Name string
 	}
 
@@ -262,4 +265,63 @@ func TestSlogLogger_WithGormExecution(t *testing.T) {
 
 	output := buf.String()
 	assert.True(t, strings.Contains(output, "CREATE TABLE") || strings.Contains(output, "INSERT INTO") || strings.Contains(output, "SELECT * FROM"))
+}
+
+func TestSlogLogger_HandlerLevelDisabled(t *testing.T) {
+	buf := &bytes.Buffer{}
+	// Handler is configured at LevelError (Warn and Info disabled)
+	errOnlyLogger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{
+		Level: slog.LevelError,
+	}))
+
+	sl := NewSlogLogger(SlogLoggerConfig{
+		SlowThreshold: 10 * time.Millisecond,
+		LogLevel:      gormlogger.Info, // GORM level is Info
+		BaseLogger:    errOnlyLogger,
+	})
+
+	ctx := context.Background()
+
+	// 1. Slow query (Warn) should be suppressed by handler's LevelError
+	fcCalled := false
+	sl.Trace(ctx, time.Now().Add(-50*time.Millisecond), func() (string, int64) {
+		fcCalled = true
+		return "SELECT * FROM slow_suppressed", 1
+	}, nil)
+	assert.False(t, fcCalled, "fc should not be invoked when handler has Warn disabled")
+	assert.Empty(t, buf.String())
+
+	// 2. Info query should be suppressed by handler's LevelError
+	fcCalled = false
+	sl.Trace(ctx, time.Now().Add(-2*time.Millisecond), func() (string, int64) {
+		fcCalled = true
+		return "SELECT * FROM info_suppressed", 1
+	}, nil)
+	assert.False(t, fcCalled, "fc should not be invoked when handler has Info disabled")
+	assert.Empty(t, buf.String())
+
+	// 3. Error query should pass through
+	sl.Trace(ctx, time.Now(), func() (string, int64) {
+		return "SELECT * FROM err_allowed", -1
+	}, errors.New("db error"))
+	assert.Contains(t, buf.String(), "gorm query error")
+	assert.Contains(t, buf.String(), "err_allowed")
+}
+
+func TestSlogLogger_CallerPointsToCaller(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := newTestLogger(buf)
+
+	sl := NewSlogLogger(SlogLoggerConfig{
+		LogLevel:   gormlogger.Info,
+		BaseLogger: logger,
+	})
+
+	sl.Trace(context.Background(), time.Now(), func() (string, int64) {
+		return "SELECT 1", 1
+	}, nil)
+
+	output := buf.String()
+	assert.Contains(t, output, "logger_test.go")
+	assert.NotContains(t, output, "logger.go:165")
 }

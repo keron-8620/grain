@@ -170,6 +170,15 @@ func TestMenuRepo_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(allWithApis), 2)
 
+	// 8.1 CountChildren
+	count, err := repo.CountChildren(ctx, parent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+
+	zeroCount, err := repo.CountChildren(ctx, child.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), zeroCount)
+
 	// 9. Delete
 	err = repo.Delete(ctx, child.ID)
 	require.NoError(t, err)

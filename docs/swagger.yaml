@@ -1,0 +1,2662 @@
+basePath: /
+definitions:
+  auth.JSONWebKey:
+    properties:
+      active:
+        description: Extension parameter (RFC 7517 Section 4 allows extension members)
+        type: boolean
+      alg:
+        description: 'Algorithm: "RS256", "ES256", "EdDSA", etc.'
+        type: string
+      crv:
+        description: EC parameters (RFC 7518 Section 6.2)
+        type: string
+      e:
+        description: Exponent (base64url unpadded)
+        type: string
+      kid:
+        description: Key ID
+        type: string
+      kty:
+        description: 'Key Type: "RSA", "EC", "OKP"'
+        type: string
+      "n":
+        description: RSA parameters (RFC 7518 Section 6.3)
+        type: string
+      use:
+        description: 'Public Key Use: "sig"'
+        type: string
+      x:
+        description: X coordinate (EC) or public key bytes (OKP)
+        type: string
+      "y":
+        description: Y coordinate (EC)
+        type: string
+    type: object
+  auth.PublicKeyEntry:
+    properties:
+      active:
+        description: |-
+          Active reports whether IAM is still signing with this key. During a rotation window both the
+          new (active) and the previous (verification-only) key are published.
+        type: boolean
+      algorithm:
+        description: Algorithm is the JWS algorithm the key is used with (e.g. ES256).
+        type: string
+      key_id:
+        description: KeyID matches the `kid` header of the tokens the key signs.
+        type: string
+      public_key:
+        description: PublicKey is the PEM-encoded public key.
+        type: string
+    type: object
+  grain_internal_biz_iam.Api:
+    properties:
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      label:
+        type: string
+      method:
+        type: string
+      updatedAt:
+        type: string
+      url:
+        type: string
+    type: object
+  grain_internal_biz_iam.Button:
+    properties:
+      apiIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      apis:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Api'
+        type: array
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      isActive:
+        type: boolean
+      menu:
+        $ref: '#/definitions/grain_internal_biz_iam.Menu'
+      menuID:
+        format: int64
+        type: integer
+      name:
+        type: string
+      sort:
+        format: int32
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  grain_internal_biz_iam.Menu:
+    properties:
+      apiIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      apis:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Api'
+        type: array
+      component:
+        type: string
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      isActive:
+        type: boolean
+      meta:
+        $ref: '#/definitions/iam.MenuMeta'
+      name:
+        type: string
+      parent:
+        $ref: '#/definitions/grain_internal_biz_iam.Menu'
+      parentID:
+        format: int64
+        type: integer
+      path:
+        type: string
+      sort:
+        format: int32
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  grain_internal_biz_iam.MenuTreeNode:
+    properties:
+      apiIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      apis:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Api'
+        type: array
+      children:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.MenuTreeNode'
+        type: array
+      component:
+        type: string
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      isActive:
+        type: boolean
+      meta:
+        $ref: '#/definitions/iam.MenuMeta'
+      name:
+        type: string
+      parent:
+        $ref: '#/definitions/grain_internal_biz_iam.Menu'
+      parentID:
+        format: int64
+        type: integer
+      path:
+        type: string
+      sort:
+        format: int32
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  grain_internal_biz_iam.Role:
+    properties:
+      apiIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      apis:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Api'
+        type: array
+      buttonIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      buttons:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Button'
+        type: array
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      menuIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      menus:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Menu'
+        type: array
+      name:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  grain_internal_biz_iam.TokenPair:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      token_type:
+        type: string
+    type: object
+  grain_internal_biz_iam.User:
+    properties:
+      createdAt:
+        type: string
+      id:
+        format: int64
+        type: integer
+      isActive:
+        type: boolean
+      password:
+        type: string
+      role:
+        $ref: '#/definitions/grain_internal_biz_iam.Role'
+      roleID:
+        format: int64
+        type: integer
+      tokenVersion:
+        format: int64
+        type: integer
+      updatedAt:
+        type: string
+      username:
+        type: string
+    type: object
+  grain_internal_service_iam.Api:
+    properties:
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      label:
+        type: string
+      method:
+        type: string
+      updatedAt:
+        type: string
+      url:
+        type: string
+    type: object
+  grain_internal_service_iam.Button:
+    properties:
+      apiIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      apis:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Api'
+        type: array
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      isActive:
+        type: boolean
+      menu:
+        $ref: '#/definitions/grain_internal_biz_iam.Menu'
+      menuID:
+        format: int64
+        type: integer
+      name:
+        type: string
+      sort:
+        format: int32
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  grain_internal_service_iam.Menu:
+    properties:
+      apiIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      apis:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Api'
+        type: array
+      component:
+        type: string
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      isActive:
+        type: boolean
+      meta:
+        $ref: '#/definitions/iam.MenuMeta'
+      name:
+        type: string
+      parent:
+        $ref: '#/definitions/grain_internal_biz_iam.Menu'
+      parentID:
+        format: int64
+        type: integer
+      path:
+        type: string
+      sort:
+        format: int32
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  grain_internal_service_iam.MenuTreeNode:
+    properties:
+      apiIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      apis:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Api'
+        type: array
+      children:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.MenuTreeNode'
+        type: array
+      component:
+        type: string
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      isActive:
+        type: boolean
+      meta:
+        $ref: '#/definitions/iam.MenuMeta'
+      name:
+        type: string
+      parent:
+        $ref: '#/definitions/grain_internal_biz_iam.Menu'
+      parentID:
+        format: int64
+        type: integer
+      path:
+        type: string
+      sort:
+        format: int32
+        type: integer
+      updatedAt:
+        type: string
+    type: object
+  grain_internal_service_iam.Role:
+    properties:
+      apiIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      apis:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Api'
+        type: array
+      buttonIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      buttons:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Button'
+        type: array
+      createdAt:
+        type: string
+      descr:
+        type: string
+      id:
+        format: int64
+        type: integer
+      menuIDs:
+        items:
+          format: int64
+          type: integer
+        type: array
+      menus:
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Menu'
+        type: array
+      name:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  grain_internal_service_iam.TokenPair:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      token_type:
+        type: string
+    type: object
+  grain_internal_service_iam.User:
+    properties:
+      createdAt:
+        type: string
+      id:
+        format: int64
+        type: integer
+      isActive:
+        type: boolean
+      password:
+        type: string
+      role:
+        $ref: '#/definitions/grain_internal_biz_iam.Role'
+      roleID:
+        format: int64
+        type: integer
+      tokenVersion:
+        format: int64
+        type: integer
+      updatedAt:
+        type: string
+      username:
+        type: string
+    type: object
+  iam.ApiPageResult:
+    properties:
+      list:
+        description: 接口列表
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Api'
+        type: array
+      total:
+        description: 总接口数
+        example: 1
+        type: integer
+    type: object
+  iam.ButtonPageResult:
+    properties:
+      list:
+        description: 按钮列表
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Button'
+        type: array
+      total:
+        description: 总按钮数
+        example: 1
+        type: integer
+    type: object
+  iam.ChangePasswordReq:
+    properties:
+      new_password:
+        description: 新密码 (至少6位)
+        example: "654321"
+        maxLength: 64
+        minLength: 6
+        type: string
+      old_password:
+        description: 旧密码
+        example: "123456"
+        type: string
+    required:
+    - new_password
+    - old_password
+    type: object
+  iam.CreateApiReq:
+    properties:
+      descr:
+        description: 接口功能说明
+        example: 分页获取系统用户列表
+        type: string
+      label:
+        description: 接口显示名称/标签
+        example: 获取用户列表
+        type: string
+      method:
+        description: HTTP 请求方法 (GET, POST, PUT, DELETE等)
+        example: GET
+        type: string
+      url:
+        description: 路由 URL 匹配路径
+        example: /api/v1/users
+        type: string
+    required:
+    - method
+    - url
+    type: object
+  iam.CreateButtonReq:
+    properties:
+      api_ids:
+        description: 关联的接口ID列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      descr:
+        description: 按钮描述
+        example: 用户新增按钮
+        type: string
+      is_active:
+        description: 是否启用
+        example: true
+        type: boolean
+      menu_id:
+        description: 所属菜单ID
+        example: 1
+        type: integer
+      name:
+        description: 按钮标识 (唯一名称)
+        example: user:add
+        maxLength: 64
+        minLength: 2
+        type: string
+      sort:
+        description: 排序号
+        example: 1
+        type: integer
+    required:
+    - menu_id
+    - name
+    type: object
+  iam.CreateMenuReq:
+    properties:
+      api_ids:
+        description: 关联的接口ID列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      component:
+        description: 前端组件路径
+        example: Layout
+        type: string
+      descr:
+        description: 描述说明
+        example: 系统基础配置管理
+        type: string
+      is_active:
+        description: 是否启用 (默认启用)
+        example: true
+        type: boolean
+      meta:
+        allOf:
+        - $ref: '#/definitions/iam.MenuMetaReq'
+        description: 菜单元数据 (标题/图标)
+      name:
+        description: 菜单名称 (唯一标识)
+        example: System
+        maxLength: 64
+        minLength: 2
+        type: string
+      parent_id:
+        description: 父级菜单ID (0或空为顶级菜单)
+        example: 0
+        type: integer
+      path:
+        description: 前端路由路径
+        example: /system
+        type: string
+      sort:
+        description: 排序号 (升序)
+        example: 1
+        type: integer
+    required:
+    - meta
+    - name
+    - path
+    type: object
+  iam.CreateRoleReq:
+    properties:
+      api_ids:
+        description: 关联 API 接口 ID 列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      button_ids:
+        description: 关联按钮 ID 列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      descr:
+        description: 角色描述
+        example: 系统管理员角色
+        type: string
+      menu_ids:
+        description: 关联菜单 ID 列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      name:
+        description: 角色名称
+        example: admin
+        maxLength: 64
+        minLength: 2
+        type: string
+    required:
+    - name
+    type: object
+  iam.CreateUserReq:
+    properties:
+      is_active:
+        description: 是否启用 (默认启用)
+        example: true
+        type: boolean
+      password:
+        description: 密码 (至少6位)
+        example: "123456"
+        maxLength: 64
+        minLength: 6
+        type: string
+      role_id:
+        description: 关联角色ID
+        example: 1
+        type: integer
+      username:
+        description: 用户名
+        example: zhangsan
+        maxLength: 64
+        minLength: 2
+        type: string
+    required:
+    - password
+    - role_id
+    - username
+    type: object
+  iam.JSONWebKeySet:
+    properties:
+      keys:
+        items:
+          $ref: '#/definitions/auth.JSONWebKey'
+        type: array
+    type: object
+  iam.LoginReq:
+    properties:
+      password:
+        description: 密码
+        example: "123456"
+        maxLength: 64
+        minLength: 6
+        type: string
+      username:
+        description: 用户名
+        example: admin
+        maxLength: 64
+        minLength: 2
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  iam.LoginResp:
+    properties:
+      tokens:
+        allOf:
+        - $ref: '#/definitions/grain_internal_biz_iam.TokenPair'
+        description: 访问令牌与刷新令牌
+      user:
+        allOf:
+        - $ref: '#/definitions/grain_internal_biz_iam.User'
+        description: 登录用户信息
+    type: object
+  iam.LogoutReq:
+    properties:
+      refresh_token:
+        description: 可选：待撤销的刷新令牌
+        example: eyJhbGciOi...
+        type: string
+    type: object
+  iam.MenuMeta:
+    properties:
+      icon:
+        type: string
+      title:
+        type: string
+    type: object
+  iam.MenuMetaReq:
+    properties:
+      icon:
+        description: 图标标识
+        example: setting
+        type: string
+      title:
+        description: 菜单标题
+        example: 系统管理
+        type: string
+    required:
+    - title
+    type: object
+  iam.MenuPageResult:
+    properties:
+      list:
+        description: 菜单列表
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Menu'
+        type: array
+      total:
+        description: 总菜单数
+        example: 1
+        type: integer
+    type: object
+  iam.PublicKeyResponse:
+    properties:
+      algorithm:
+        type: string
+      audience:
+        type: string
+      issuer:
+        type: string
+      key_id:
+        type: string
+      keys:
+        items:
+          $ref: '#/definitions/auth.PublicKeyEntry'
+        type: array
+      public_key:
+        description: Legacy format fields
+        type: string
+    type: object
+  iam.RefreshTokenReq:
+    properties:
+      refresh_token:
+        description: 刷新令牌
+        example: eyJhbGciOi...
+        type: string
+    required:
+    - refresh_token
+    type: object
+  iam.ResetPasswordReq:
+    properties:
+      new_password:
+        description: 新密码 (至少6位)
+        example: "654321"
+        maxLength: 64
+        minLength: 6
+        type: string
+    required:
+    - new_password
+    type: object
+  iam.Response:
+    properties:
+      code:
+        description: 业务状态码 (0 表示成功)
+        example: 0
+        type: integer
+      data:
+        description: 响应数据对象
+      msg:
+        description: 状态描述或提示信息
+        example: ok
+        type: string
+    type: object
+  iam.RolePageResult:
+    properties:
+      list:
+        description: 角色列表
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.Role'
+        type: array
+      total:
+        description: 总角色数
+        example: 1
+        type: integer
+    type: object
+  iam.SyncApisReq:
+    properties:
+      routes:
+        description: 路由列表
+        items:
+          $ref: '#/definitions/iam.SyncRouteItem'
+        type: array
+    required:
+    - routes
+    type: object
+  iam.SyncApisResp:
+    properties:
+      synced:
+        description: 成功同步的新增路由数
+        example: 15
+        type: integer
+    type: object
+  iam.SyncRouteItem:
+    properties:
+      descr:
+        description: 接口描述
+        example: 获取用户列表
+        type: string
+      label:
+        description: 接口名称
+        example: 用户管理
+        type: string
+      method:
+        description: 请求方法
+        example: GET
+        type: string
+      url:
+        description: 路由 URL
+        example: /api/v1/users
+        type: string
+    required:
+    - method
+    - url
+    type: object
+  iam.UpdateApiReq:
+    properties:
+      descr:
+        description: 接口功能说明
+        example: 分页获取系统用户列表
+        type: string
+      label:
+        description: 接口显示名称
+        example: 获取用户列表
+        type: string
+      method:
+        description: HTTP 请求方法
+        example: GET
+        type: string
+      url:
+        description: 路由 URL 匹配路径
+        example: /api/v1/users
+        type: string
+    required:
+    - method
+    - url
+    type: object
+  iam.UpdateButtonReq:
+    properties:
+      api_ids:
+        description: 关联的接口ID列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      descr:
+        description: 按钮描述
+        example: 用户新增按钮
+        type: string
+      is_active:
+        description: 是否启用
+        example: true
+        type: boolean
+      menu_id:
+        description: 所属菜单ID
+        example: 1
+        type: integer
+      name:
+        description: 按钮标识
+        example: user:add
+        maxLength: 64
+        minLength: 2
+        type: string
+      sort:
+        description: 排序号
+        example: 1
+        type: integer
+    required:
+    - menu_id
+    - name
+    type: object
+  iam.UpdateMenuReq:
+    properties:
+      api_ids:
+        description: 关联的接口ID列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      component:
+        description: 前端组件路径
+        example: Layout
+        type: string
+      descr:
+        description: 描述说明
+        example: 系统基础配置管理
+        type: string
+      is_active:
+        description: 是否启用
+        example: true
+        type: boolean
+      meta:
+        allOf:
+        - $ref: '#/definitions/iam.MenuMetaReq'
+        description: 菜单元数据
+      name:
+        description: 菜单名称 (唯一标识)
+        example: System
+        maxLength: 64
+        minLength: 2
+        type: string
+      parent_id:
+        description: 父级菜单ID
+        example: 0
+        type: integer
+      path:
+        description: 前端路由路径
+        example: /system
+        type: string
+      sort:
+        description: 排序号
+        example: 1
+        type: integer
+    required:
+    - meta
+    - name
+    - path
+    type: object
+  iam.UpdateRoleReq:
+    properties:
+      api_ids:
+        description: 关联 API 接口 ID 列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      button_ids:
+        description: 关联按钮 ID 列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      descr:
+        description: 角色描述
+        example: 系统管理员角色
+        type: string
+      menu_ids:
+        description: 关联菜单 ID 列表
+        example:
+        - 1
+        - 2
+        items:
+          type: integer
+        type: array
+      name:
+        description: 角色名称
+        example: admin
+        maxLength: 64
+        minLength: 2
+        type: string
+    required:
+    - name
+    type: object
+  iam.UpdateUserReq:
+    properties:
+      is_active:
+        description: 是否启用
+        example: true
+        type: boolean
+      password:
+        description: 密码 (可选，重设密码)
+        example: "123456"
+        type: string
+      role_id:
+        description: 关联角色ID
+        example: 1
+        type: integer
+      username:
+        description: 用户名
+        example: zhangsan
+        type: string
+    type: object
+  iam.UserPageResult:
+    properties:
+      list:
+        description: 用户列表
+        items:
+          $ref: '#/definitions/grain_internal_biz_iam.User'
+        type: array
+      total:
+        description: 总用户数
+        example: 1
+        type: integer
+    type: object
+info:
+  contact: {}
+  description: artweb 自动化运维平台 IAM 模块 API 接口文档
+  title: artweb API
+  version: "1.0"
+paths:
+  /.well-known/jwks.json:
+    get:
+      description: 返回标准 JWKS (JSON Web Key Set) 格式的公钥集合
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: JWKS获取成功
+          schema:
+            $ref: '#/definitions/iam.JSONWebKeySet'
+        "500":
+          description: 服务器配置异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      summary: 获取 RFC 7517 标准 JWKS 公钥集
+      tags:
+      - IAM/认证管理
+  /api/v1/apis:
+    get:
+      description: 支持按路径、请求方法、标签过滤及分页排序
+      parameters:
+      - description: 页码 (默认1)
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量 (默认20, 最大100)
+        in: query
+        name: page_size
+        type: integer
+      - description: 路由路径模糊匹配
+        in: query
+        name: url
+        type: string
+      - description: HTTP方法 (GET, POST等)
+        in: query
+        name: method
+        type: string
+      - description: 接口标签模糊匹配
+        in: query
+        name: label
+        type: string
+      - description: 排序规则
+        in: query
+        name: order_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/iam.ApiPageResult'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 分页查询 API 列表
+      tags:
+      - IAM/接口管理
+    post:
+      consumes:
+      - application/json
+      description: 注册新的 API 路由端点到权限目录并自动在 Casbin 中生成基础访问策略
+      parameters:
+      - description: 创建API参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.CreateApiReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Api'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 该API路由已存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 创建 API 接口资源
+      tags:
+      - IAM/接口管理
+  /api/v1/apis/{id}:
+    delete:
+      description: 删除指定 API 路由记录并级联清理对应的 Casbin 策略规则
+      parameters:
+      - description: API ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: API不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 删除 API 接口资源
+      tags:
+      - IAM/接口管理
+    get:
+      description: 根据主键获取 API 资源定义及说明
+      parameters:
+      - description: API ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Api'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: API不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取 API 接口详情
+      tags:
+      - IAM/接口管理
+    put:
+      consumes:
+      - application/json
+      description: 更新 API 路径、请求方法或标签，并自动同步更新 Casbin 策略规则
+      parameters:
+      - description: API ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 更新API参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.UpdateApiReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Api'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: API不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 该API路由已被其他记录使用
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 更新 API 接口资源
+      tags:
+      - IAM/接口管理
+  /api/v1/apis/sync:
+    post:
+      consumes:
+      - application/json
+      description: 批量导入系统当前实际注册的路由清单，新增未知路由并初始化 Casbin 策略
+      parameters:
+      - description: 路由列表
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.SyncApisReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 同步成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/iam.SyncApisResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 批量同步 API 路由
+      tags:
+      - IAM/接口管理
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: 用户通过用户名与密码凭证换取访问令牌与刷新令牌
+      parameters:
+      - description: 登录凭证
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.LoginReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 登录成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/iam.LoginResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 用户名或密码错误
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 账号已被锁定/禁用
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      summary: 用户登录
+      tags:
+      - IAM/认证管理
+  /api/v1/auth/logout:
+    post:
+      consumes:
+      - application/json
+      description: 撤销当前用户的登录凭证，使当前刷新令牌和所有旧访问令牌失效
+      parameters:
+      - description: 可选刷新令牌
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/iam.LogoutReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 登出成功
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 用户登出
+      tags:
+      - IAM/认证管理
+  /api/v1/auth/me:
+    get:
+      description: 从当前访问令牌中提取用户上下文并返回用户详情与关联角色
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.User'
+              type: object
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取当前登录用户信息
+      tags:
+      - IAM/认证管理
+  /api/v1/auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: 使用有效的刷新令牌 (Refresh Token) 换取新的访问令牌与刷新令牌 (Token Rotation)
+      parameters:
+      - description: 刷新令牌请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.RefreshTokenReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 刷新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.TokenPair'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 刷新令牌无效或已过期
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      summary: 刷新访问凭证
+      tags:
+      - IAM/认证管理
+  /api/v1/buttons:
+    get:
+      description: 支持按名称、所属菜单ID、状态过滤及分页排序
+      parameters:
+      - description: 页码 (默认1)
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量 (默认20, 最大100)
+        in: query
+        name: page_size
+        type: integer
+      - description: 按钮名称模糊匹配
+        in: query
+        name: name
+        type: string
+      - description: 所属菜单ID
+        in: query
+        name: menu_id
+        type: integer
+      - description: 状态过滤
+        in: query
+        name: is_active
+        type: boolean
+      - description: 排序规则
+        in: query
+        name: order_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/iam.ButtonPageResult'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 分页查询按钮列表
+      tags:
+      - IAM/按钮管理
+    post:
+      consumes:
+      - application/json
+      description: 在指定菜单下创建按钮权限节点并同步 Casbin 授权策略
+      parameters:
+      - description: 创建按钮参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.CreateButtonReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Button'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 关联菜单不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 按钮名称已存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 创建按钮权限
+      tags:
+      - IAM/按钮管理
+  /api/v1/buttons/{id}:
+    delete:
+      description: 删除指定按钮并清理其在 Casbin 中的权限继承策略
+      parameters:
+      - description: 按钮ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 按钮不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 删除按钮权限
+      tags:
+      - IAM/按钮管理
+    get:
+      description: 根据主键获取按钮详细信息及其关联菜单与 API 接口列表
+      parameters:
+      - description: 按钮ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Button'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 按钮不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取按钮详情
+      tags:
+      - IAM/按钮管理
+    put:
+      consumes:
+      - application/json
+      description: 更新按钮权限属性、所属菜单或绑定的 API 接口，并同步策略规则
+      parameters:
+      - description: 按钮ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 更新按钮参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.UpdateButtonReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Button'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 按钮不存在或关联菜单不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 按钮名称已被其他记录使用
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 更新按钮权限
+      tags:
+      - IAM/按钮管理
+  /api/v1/menus:
+    get:
+      description: 支持按名称、路径、状态筛选及分页排序
+      parameters:
+      - description: 页码 (默认1)
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量 (默认20, 最大100)
+        in: query
+        name: page_size
+        type: integer
+      - description: 菜单名称模糊匹配
+        in: query
+        name: name
+        type: string
+      - description: 路由路径过滤
+        in: query
+        name: path
+        type: string
+      - description: 状态过滤
+        in: query
+        name: is_active
+        type: boolean
+      - description: 排序规则 (如 sort asc)
+        in: query
+        name: order_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/iam.MenuPageResult'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 分页查询菜单列表
+      tags:
+      - IAM/菜单管理
+    post:
+      consumes:
+      - application/json
+      description: 创建新的菜单路由节点并同步 Casbin 菜单与 API 继承权限策略
+      parameters:
+      - description: 创建菜单参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.CreateMenuReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Menu'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 菜单名称或路径已存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 创建系统菜单
+      tags:
+      - IAM/菜单管理
+  /api/v1/menus/{id}:
+    delete:
+      description: 删除菜单（若包含子菜单或关联按钮则禁止删除，需先清理子节点）
+      parameters:
+      - description: 菜单ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "400":
+          description: 参数不合法或存在关联子菜单/按钮
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 菜单不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 删除系统菜单
+      tags:
+      - IAM/菜单管理
+    get:
+      description: 根据主键获取菜单信息、元数据及绑定的 API 列表
+      parameters:
+      - description: 菜单ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Menu'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 菜单不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取指定菜单详情
+      tags:
+      - IAM/菜单管理
+    put:
+      consumes:
+      - application/json
+      description: 更新菜单属性及父子层级关系（防止循环引用）并同步权限策略
+      parameters:
+      - description: 菜单ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 更新菜单参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.UpdateMenuReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Menu'
+              type: object
+        "400":
+          description: 参数不合法或检测到循环层级
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 菜单不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 菜单名称或路径已被其他记录使用
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 更新系统菜单
+      tags:
+      - IAM/菜单管理
+  /api/v1/menus/tree:
+    get:
+      description: 获取系统完整层级嵌套的菜单树结构，按 sort 升序排序
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/grain_internal_service_iam.MenuTreeNode'
+                  type: array
+              type: object
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取系统菜单树
+      tags:
+      - IAM/菜单管理
+  /api/v1/public-key:
+    get:
+      description: 获取用于客户端或下游服务校验 JWT 令牌签名的公钥及 JWKS 规范定义
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 公钥获取成功
+          schema:
+            $ref: '#/definitions/iam.PublicKeyResponse'
+        "500":
+          description: 服务器配置异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      summary: 获取 JWT 验签公钥
+      tags:
+      - IAM/认证管理
+  /api/v1/roles:
+    get:
+      description: 支持按角色名称模糊查询及分页排序
+      parameters:
+      - description: 页码 (默认1)
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量 (默认20, 最大100)
+        in: query
+        name: page_size
+        type: integer
+      - description: 角色名称模糊匹配
+        in: query
+        name: name
+        type: string
+      - description: 排序规则
+        in: query
+        name: order_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/iam.RolePageResult'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 分页查询角色列表
+      tags:
+      - IAM/角色管理
+    post:
+      consumes:
+      - application/json
+      description: 创建新角色并配置关联的 API 权限、菜单权限和按钮权限
+      parameters:
+      - description: 创建角色参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.CreateRoleReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Role'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 角色名称已存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 创建角色
+      tags:
+      - IAM/角色管理
+  /api/v1/roles/{id}:
+    delete:
+      description: 删除指定角色并清理其在 Casbin 中的权限策略映射（角色下有关联用户时不可删除）
+      parameters:
+      - description: 角色ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "400":
+          description: 参数不合法或角色下仍有关联用户
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 角色不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 删除角色
+      tags:
+      - IAM/角色管理
+    get:
+      description: 获取角色详细信息及其关联的 API、菜单、按钮权限集合
+      parameters:
+      - description: 角色ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Role'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 角色不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取角色详情
+      tags:
+      - IAM/角色管理
+    put:
+      consumes:
+      - application/json
+      description: 更新角色信息及绑定的权限策略，并刷新该角色下所有用户的有效会话
+      parameters:
+      - description: 角色ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 更新角色参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.UpdateRoleReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.Role'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 角色不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 角色名称已被其他记录使用
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 更新角色
+      tags:
+      - IAM/角色管理
+  /api/v1/users:
+    get:
+      description: 支持按用户名、角色ID、状态条件筛选及分页排序
+      parameters:
+      - description: 页码 (默认1)
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量 (默认20, 最大100)
+        in: query
+        name: page_size
+        type: integer
+      - description: 用户名模糊匹配
+        in: query
+        name: username
+        type: string
+      - description: 角色ID过滤
+        in: query
+        name: role_id
+        type: integer
+      - description: 状态过滤
+        in: query
+        name: is_active
+        type: boolean
+      - description: 排序规则
+        in: query
+        name: order_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/iam.UserPageResult'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 分页查询系统用户列表
+      tags:
+      - IAM/用户管理
+    post:
+      consumes:
+      - application/json
+      description: 创建新用户账号并分配初始角色与登录密码
+      parameters:
+      - description: 创建用户参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.CreateUserReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.User'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 用户名已存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 创建系统用户
+      tags:
+      - IAM/用户管理
+  /api/v1/users/{id}:
+    delete:
+      description: 根据主键彻底删除系统用户账号
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 删除系统用户
+      tags:
+      - IAM/用户管理
+    get:
+      description: 根据用户主键获取用户脱敏信息与关联角色
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 获取成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.User'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取指定用户详情
+      tags:
+      - IAM/用户管理
+    put:
+      consumes:
+      - application/json
+      description: 根据主键更新用户名、分配的角色或账号启用状态
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 更新用户参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.UpdateUserReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/iam.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/grain_internal_service_iam.User'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "409":
+          description: 用户名已被其他记录使用
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 更新系统用户信息
+      tags:
+      - IAM/用户管理
+  /api/v1/users/{id}/change-password:
+    post:
+      consumes:
+      - application/json
+      description: 用户通过验证原密码修改为新密码，并将原有的活跃登录会话全部踢出
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 修改密码参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.ChangePasswordReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 密码修改成功
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "400":
+          description: 参数不合法或密码强度不足
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 原密码错误或认证失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 修改用户密码
+      tags:
+      - IAM/用户管理
+  /api/v1/users/{id}/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: 管理员直接重置用户账号登录密码，并强制终止该用户的所有会话
+      parameters:
+      - description: 用户ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 重置密码参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/iam.ResetPasswordReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 重置成功
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "404":
+          description: 用户不存在
+          schema:
+            $ref: '#/definitions/iam.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/iam.Response'
+      security:
+      - BearerAuth: []
+      summary: 管理员重置用户密码
+      tags:
+      - IAM/用户管理
+securityDefinitions:
+  BearerAuth:
+    description: '请在请求头中传入 Bearer 格式的 JWT Token，例如: "Bearer {token}"'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

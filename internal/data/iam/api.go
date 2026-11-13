@@ -246,6 +246,48 @@ func (r *apiRepo) FindByURLAndMethod(ctx context.Context, url, method string) (*
 	return toBizApi(&po), nil
 }
 
+func (r *apiRepo) FindByRoutes(ctx context.Context, routes []biz.ApiRoute) ([]*biz.Api, error) {
+	if len(routes) == 0 {
+		return nil, nil
+	}
+
+	var conditions []string
+	var args []any
+	for _, rt := range routes {
+		url := strings.TrimSpace(rt.URL)
+		method := strings.ToUpper(strings.TrimSpace(rt.Method))
+		if url == "" || method == "" {
+			continue
+		}
+		conditions = append(conditions, "(url = ? AND method = ?)")
+		args = append(args, url, method)
+	}
+	if len(conditions) == 0 {
+		return nil, nil
+	}
+
+	if r.logger.Enabled(ctx, slog.LevelDebug) {
+		r.logger.DebugContext(
+			ctx,
+			"find APIs by routes",
+			slog.Int("route_count", len(routes)),
+		)
+	}
+
+	var pos []apiPO
+	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpRead, "find APIs by routes", func(dbCtx context.Context) error {
+		return r.data.gormdb.WithContext(dbCtx).Where(strings.Join(conditions, " OR "), args...).Find(&pos).Error
+	}, slog.Int("route_count", len(routes))); err != nil {
+		return nil, err
+	}
+
+	res := make([]*biz.Api, len(pos))
+	for i := range pos {
+		res[i] = toBizApi(&pos[i])
+	}
+	return res, nil
+}
+
 func (r *apiRepo) List(ctx context.Context, opts biz.ApiListOptions) ([]*biz.Api, int64, error) {
 
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
@@ -378,20 +420,40 @@ func (r *apiRepo) AddPolicy(
 		return errors.New("add API policy: request method cannot be empty")
 	}
 
+	return r.AddPolicies(ctx, []*biz.Api{do})
+}
+
+func (r *apiRepo) AddPolicies(
+	ctx context.Context,
+	apis []*biz.Api,
+) error {
+	if len(apis) == 0 {
+		return nil
+	}
+
+	rules := make([][]string, 0, len(apis))
+	for _, a := range apis {
+		if a == nil || a.ID == 0 || a.URL == "" || a.Method == "" {
+			continue
+		}
+		sub := auth.ApiToSubject(a.ID)
+		rules = append(rules, []string{sub, a.URL, a.Method})
+	}
+	if len(rules) == 0 {
+		return nil
+	}
+
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
 		r.logger.DebugContext(
 			ctx,
-			"add API policy: request details",
-			slog.Any("api", do),
+			"add API policies batch: request details",
+			slog.Int("rules_count", len(rules)),
 		)
 	}
 
-	sub := auth.ApiToSubject(do.ID)
-	rules := [][]string{{sub, do.URL, do.Method}}
-
-	return runPolicyOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, "add API policy", func(opCtx context.Context) error {
+	return runPolicyOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, "add API policies batch", func(opCtx context.Context) error {
 		return AddPolicies(opCtx, r.data.enforcer, rules)
-	}, slog.Uint64("api_id", uint64(do.ID)), slog.String("url", do.URL), slog.String("method", do.Method))
+	}, slog.Int("rules_count", len(rules)))
 }
 
 func (r *apiRepo) UpdatePolicy(

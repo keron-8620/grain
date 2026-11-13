@@ -27,12 +27,13 @@ import (
 	"github.com/robfig/cron/v3"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
-	"github.com/swaggo/swag/example/basic/docs"
 	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 
+	"grain/docs"
 	"grain/internal/conf"
 	"grain/internal/middleware"
+	iamserver "grain/internal/server/iam"
 	"grain/pkg/db"
 	"grain/pkg/logx"
 )
@@ -58,6 +59,15 @@ func init() {
 	flag.StringVar(&execSqlPath, "exec-sql", "", "执行SQL文件路径")
 }
 
+// @title artweb API
+// @version 1.0
+// @description artweb 自动化运维平台 IAM 模块 API 接口文档
+// @BasePath /
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description 请在请求头中传入 Bearer 格式的 JWT Token，例如: "Bearer {token}"
 func main() {
 	flag.Parse()
 
@@ -411,7 +421,9 @@ func NewRouter(
 	r.Use(middleware.TimeoutMiddleware(logger, bc.Server.Timeout.Request))
 
 	// 初始化加载业务模块
-	// apiRouter := r.Group("/api")
+	if _, err := iamserver.InitServer(ctx, r, bc, logger, gormDB, enforcer); err != nil {
+		logger.ErrorContext(ctx, "初始化 IAM 模块失败", slog.Any("error", err))
+	}
 
 	return r
 }

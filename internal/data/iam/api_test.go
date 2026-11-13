@@ -180,6 +180,15 @@ func TestApiRepo_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, synced) // Only /api/v1/roles should be inserted
 
+	// 7.1 FindByRoutes
+	foundRoutes, err := repo.FindByRoutes(ctx, routes)
+	require.NoError(t, err)
+	assert.Len(t, foundRoutes, 2) // users and roles
+
+	emptyRoutes, err := repo.FindByRoutes(ctx, nil)
+	require.NoError(t, err)
+	assert.Nil(t, emptyRoutes)
+
 	// Empty sync routes short-circuit
 	synced, err = repo.SyncRoutes(ctx, nil)
 	require.NoError(t, err)
@@ -247,4 +256,24 @@ func TestApiRepo_CasbinPolicy(t *testing.T) {
 	hasNewAfterDel, err := enf.HasPolicy(sub, newApi.URL, newApi.Method)
 	require.NoError(t, err)
 	assert.False(t, hasNewAfterDel)
+
+	// 4. AddPolicies batch
+	batchApis := []*biz.Api{
+		{ID: 11, URL: "/api/v1/posts", Method: "GET"},
+		{ID: 12, URL: "/api/v1/comments", Method: "POST"},
+	}
+	err = repo.AddPolicies(ctx, batchApis)
+	require.NoError(t, err)
+
+	hasBatch1, err := enf.HasPolicy(auth.ApiToSubject(11), "/api/v1/posts", "GET")
+	require.NoError(t, err)
+	assert.True(t, hasBatch1)
+
+	hasBatch2, err := enf.HasPolicy(auth.ApiToSubject(12), "/api/v1/comments", "POST")
+	require.NoError(t, err)
+	assert.True(t, hasBatch2)
+
+	// AddPolicies with empty list is no-op
+	err = repo.AddPolicies(ctx, nil)
+	require.NoError(t, err)
 }

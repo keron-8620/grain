@@ -374,6 +374,19 @@ func (r *menuRepo) ListAllWithApis(ctx context.Context) ([]*biz.Menu, error) {
 	return res, nil
 }
 
+func (r *menuRepo) CountChildren(ctx context.Context, parentID uint64) (int64, error) {
+	if parentID == 0 {
+		return 0, nil
+	}
+	var count int64
+	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpRead, "count children menus", func(dbCtx context.Context) error {
+		return r.data.gormdb.WithContext(dbCtx).Model(&menuPO{}).Where("parent_id = ?", parentID).Count(&count).Error
+	}, slog.Uint64("parent_id", parentID)); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // ==================== Casbin grouping policy management ====================
 
 func (r *menuRepo) AddGroupPolicy(ctx context.Context, menu *biz.Menu) error {

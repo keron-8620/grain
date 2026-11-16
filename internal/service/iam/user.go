@@ -88,6 +88,7 @@ func (s *Service) UpdateUser(c *gin.Context) {
 	}
 	if req.IsActive != nil {
 		userDO.IsActive = *req.IsActive
+		userDO.IsActiveSet = true
 	}
 
 	updated, err := s.biz.User.Update(c.Request.Context(), userDO)

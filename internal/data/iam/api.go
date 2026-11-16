@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	stderrors "errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -501,16 +502,7 @@ func (r *apiRepo) UpdatePolicy(
 			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(opCtx), 2*time.Second)
 			defer cancel()
 			if recErr := AddPolicies(rollbackCtx, r.data.enforcer, oldRules); recErr != nil {
-				r.logger.ErrorContext(opCtx, "failed to add new API policy and failed to restore old policy",
-					slog.Uint64("api_id", uint64(newApi.ID)),
-					slog.Any("policy_error", err),
-					slog.Any("recovery_error", recErr),
-				)
-			} else {
-				r.logger.WarnContext(opCtx, "failed to add the new API policy; restored the old policy",
-					slog.Uint64("api_id", uint64(newApi.ID)),
-					slog.Any("error", err),
-				)
+				return errors.WrapIf(stderrors.Join(err, recErr), "failed to add new API policies and restore old policy")
 			}
 			return errors.WrapIf(err, "failed to add new API policies")
 		}

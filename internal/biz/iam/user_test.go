@@ -129,12 +129,93 @@ func TestUserUseCase_Update(t *testing.T) {
 
 	t.Run("disable user revokes token", func(t *testing.T) {
 		updated, err := uc.Update(ctx, &User{
-			ID:       user.ID,
-			IsActive: false,
+			ID:          user.ID,
+			IsActive:    false,
+			IsActiveSet: true,
 		})
 		require.NoError(t, err)
 		assert.False(t, updated.IsActive)
 		assert.Equal(t, 2, userRepo.incrementVersionCalled[user.ID])
+	})
+
+	t.Run("password update revokes token and preserves active status", func(t *testing.T) {
+		activeUser, err := uc.Create(ctx, &User{
+			Username: "pwd_user",
+			RoleID:   r1.ID,
+			IsActive: true,
+		}, "password123")
+		require.NoError(t, err)
+
+		updated, err := uc.Update(ctx, &User{
+			ID:       activeUser.ID,
+			Password: "newpassword123",
+		})
+		require.NoError(t, err)
+		assert.True(t, updated.IsActive)
+		assert.Equal(t, 1, userRepo.incrementVersionCalled[activeUser.ID])
+
+		raw := userRepo.users[activeUser.ID]
+		hasher := cryptoutil.NewBcryptHasher(0)
+		valid, err := hasher.VerifyString("newpassword123", raw.Password)
+		require.NoError(t, err)
+		assert.True(t, valid)
+	})
+
+	t.Run("short password update is rejected", func(t *testing.T) {
+		_, err := uc.Update(ctx, &User{
+			ID:       user.ID,
+			Password: "123",
+		})
+		require.Error(t, err)
+		assert.True(t, errorx.IsCode(err, errorx.CodePasswordStrengthFailed))
+	})
+}
+
+func TestUserUseCase_PasswordPolicy(t *testing.T) {
+	ctx := context.Background()
+	userRepo := newMockUserRepo()
+	roleRepo := newMockRoleRepo()
+	uc := NewUserUseCase(userRepo, roleRepo, nil, PasswordPolicy{StrengthLevel: 2})
+
+	role, _ := roleRepo.Create(ctx, &Role{Name: "PolicyRole"})
+
+	t.Run("create enforces configured strength", func(t *testing.T) {
+		_, err := uc.Create(ctx, &User{
+			Username: "policy_user",
+			RoleID:   role.ID,
+			IsActive: true,
+		}, "abcdefgh")
+		require.Error(t, err)
+		assert.True(t, errorx.IsCode(err, errorx.CodePasswordStrengthFailed))
+
+		created, err := uc.Create(ctx, &User{
+			Username: "policy_user",
+			RoleID:   role.ID,
+			IsActive: true,
+		}, "abcd1234")
+		require.NoError(t, err)
+
+		t.Run("change password enforces policy", func(t *testing.T) {
+			err := uc.ChangePassword(ctx, created.ID, "abcd1234", "onlyletters")
+			require.Error(t, err)
+			assert.True(t, errorx.IsCode(err, errorx.CodePasswordStrengthFailed))
+
+			require.NoError(t, uc.ChangePassword(ctx, created.ID, "abcd1234", "newpass123"))
+		})
+
+		t.Run("reset password enforces policy", func(t *testing.T) {
+			err := uc.ResetPassword(ctx, created.ID, "12345678")
+			require.Error(t, err)
+			assert.True(t, errorx.IsCode(err, errorx.CodePasswordStrengthFailed))
+
+			require.NoError(t, uc.ResetPassword(ctx, created.ID, "resetpass123"))
+		})
+
+		t.Run("admin update enforces policy", func(t *testing.T) {
+			_, err := uc.Update(ctx, &User{ID: created.ID, Password: "short"})
+			require.Error(t, err)
+			assert.True(t, errorx.IsCode(err, errorx.CodePasswordStrengthFailed))
+		})
 	})
 }
 

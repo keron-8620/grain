@@ -30,7 +30,7 @@ type DBConf struct {
 	LogSQL          bool          `yaml:"log_sql" json:"log_sql"`                       // Whether to log SQL
 	SlowThreshold   time.Duration `yaml:"slow_threshold" json:"slow_threshold"`         // Slow query threshold for logging (default 1s)
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime" json:"conn_max_lifetime"`   // Maximum connection lifetime (0 uses DefaultConnMaxLifetime; < 0 means reuse indefinitely)
-	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time" json:"conn_max_idle_time"` // Maximum connection idle time (0 uses DefaultConnMaxIdleTime; < 0 means no maximum idle time)
+	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time" json:"conn_max_idle_time"` // Maximum connection idle time (0 uses DefaultConnMaxIdleTime; < 0 means no maximum idle time)         // Apply schema migrations at startup (development convenience; prefer -migrate in production)
 }
 
 // NewGormConfig creates a gorm configuration with standard log.Logger.

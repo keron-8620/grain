@@ -8,29 +8,29 @@ import (
 
 // mockApiRepo is an in-memory mock for ApiRepo
 type mockApiRepo struct {
-	apis                 map[uint64]*Api
-	nextID               uint64
-	createErr            error
-	updateErr            error
-	deleteErr            error
-	findByIDErr          error
-	findByURLErr         error
-	findByRoutesErr      error
-	listErr              error
-	syncErr              error
-	addPolicyErr         error
-	addPoliciesErr       error
-	updatePolicyErr      error
-	removePolicyErr      error
-	addPolicyCalled      bool
-	addPoliciesCalled    bool
-	updatePolicyCalled   bool
-	removePolicyCalled   bool
-	lastPolicyApi        *Api
-	lastPoliciesApis     []*Api
-	lastPolicyOldApi     *Api
-	lastPolicyNewApi     *Api
-	lastRemoveInherited  bool
+	apis                map[uint64]*Api
+	nextID              uint64
+	createErr           error
+	updateErr           error
+	deleteErr           error
+	findByIDErr         error
+	findByURLErr        error
+	findByRoutesErr     error
+	listErr             error
+	syncErr             error
+	addPolicyErr        error
+	addPoliciesErr      error
+	updatePolicyErr     error
+	removePolicyErr     error
+	addPolicyCalled     bool
+	addPoliciesCalled   bool
+	updatePolicyCalled  bool
+	removePolicyCalled  bool
+	lastPolicyApi       *Api
+	lastPoliciesApis    []*Api
+	lastPolicyOldApi    *Api
+	lastPolicyNewApi    *Api
+	lastRemoveInherited bool
 }
 
 func newMockApiRepo() *mockApiRepo {
@@ -187,16 +187,16 @@ func (m *mockApiRepo) RemovePolicy(ctx context.Context, api *Api, removeInherite
 
 // mockButtonRepo is an in-memory mock for ButtonRepo
 type mockButtonRepo struct {
-	buttons               map[uint64]*Button
-	nextID                uint64
-	createErr             error
-	updateErr             error
-	deleteErr             error
-	findByIDErr           error
-	findByNameErr         error
-	listErr               error
-	addGroupPolicyErr     error
-	removeGroupPolicyErr  error
+	buttons                 map[uint64]*Button
+	nextID                  uint64
+	createErr               error
+	updateErr               error
+	deleteErr               error
+	findByIDErr             error
+	findByNameErr           error
+	listErr                 error
+	addGroupPolicyErr       error
+	removeGroupPolicyErr    error
 	addGroupPolicyCalled    bool
 	removeGroupPolicyCalled bool
 	lastGroupPolicyButton   *Button
@@ -319,15 +319,15 @@ func (m *mockButtonRepo) RemoveGroupPolicy(ctx context.Context, button *Button, 
 
 // mockMenuRepo is an in-memory mock for MenuRepo
 type mockMenuRepo struct {
-	menus                 map[uint64]*Menu
-	nextID                uint64
-	createErr             error
-	updateErr             error
-	deleteErr             error
-	findByIDErr           error
-	findByNameErr         error
-	findByPathErr         error
-	listErr               error
+	menus                   map[uint64]*Menu
+	nextID                  uint64
+	createErr               error
+	updateErr               error
+	deleteErr               error
+	findByIDErr             error
+	findByNameErr           error
+	findByPathErr           error
+	listErr                 error
 	listAllErr              error
 	countChildrenErr        error
 	addGroupPolicyErr       error
@@ -471,17 +471,17 @@ func (m *mockMenuRepo) RemoveGroupPolicy(ctx context.Context, menu *Menu, remove
 
 // mockRoleRepo is an in-memory mock for RoleRepo
 type mockRoleRepo struct {
-	roles                 map[uint64]*Role
-	nextID                uint64
-	userCounts            map[uint64]int64
-	createErr             error
-	updateErr             error
-	deleteErr             error
-	findByIDErr           error
-	findByNameErr         error
-	listErr               error
-	listAllErr            error
-	countUsersErr         error
+	roles                   map[uint64]*Role
+	nextID                  uint64
+	userCounts              map[uint64]int64
+	createErr               error
+	updateErr               error
+	deleteErr               error
+	findByIDErr             error
+	findByNameErr           error
+	listErr                 error
+	listAllErr              error
+	countUsersErr           error
 	addGroupPolicyErr       error
 	removeGroupPolicyErr    error
 	addGroupPolicyCalled    bool
@@ -612,6 +612,8 @@ type mockUserRepo struct {
 	consumeRefreshErr          error
 	rotateFamilyErr            error
 	rotateResult               RotateFamilyResult
+	loginFailures              map[string]int64
+	loginFailureErr            error
 	incrementVersionCalled     map[uint64]int
 	incrementBatchCalled       []uint64
 }
@@ -624,7 +626,31 @@ func newMockUserRepo() *mockUserRepo {
 		nextID:                 1,
 		incrementVersionCalled: make(map[uint64]int),
 		rotateResult:           RotateFamilySuccess,
+		loginFailures:          make(map[string]int64),
 	}
+}
+
+func (m *mockUserRepo) GetLoginFailure(ctx context.Context, username string) (int64, error) {
+	if m.loginFailureErr != nil {
+		return 0, m.loginFailureErr
+	}
+	return m.loginFailures[username], nil
+}
+
+func (m *mockUserRepo) IncrementLoginFailure(ctx context.Context, username string, _ time.Duration) (int64, error) {
+	if m.loginFailureErr != nil {
+		return 0, m.loginFailureErr
+	}
+	m.loginFailures[username]++
+	return m.loginFailures[username], nil
+}
+
+func (m *mockUserRepo) ClearLoginFailures(ctx context.Context, username string) error {
+	if m.loginFailureErr != nil {
+		return m.loginFailureErr
+	}
+	delete(m.loginFailures, username)
+	return nil
 }
 
 func (m *mockUserRepo) Create(ctx context.Context, user *User) (*User, error) {

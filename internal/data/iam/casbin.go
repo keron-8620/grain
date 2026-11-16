@@ -9,10 +9,6 @@ import (
 	"github.com/casbin/casbin/v3"
 )
 
-const (
-	policyReloadAttempts = 3
-)
-
 func validatePolicyRules(ctx context.Context, enf *casbin.SyncedEnforcer, rules [][]string, expectedLen int) error {
 	if enf == nil {
 		return emperror.New("enforcer cannot be nil")
@@ -45,7 +41,7 @@ func AddPolicies(ctx context.Context, enf *casbin.SyncedEnforcer, rules [][]stri
 	if len(rules) == 0 {
 		return nil
 	}
-	if _, err := enf.AddPolicies(rules); err != nil {
+	if _, err := enf.AddPoliciesEx(rules); err != nil {
 		return emperror.WrapIfWithDetails(err, "failed to add policies", "count", len(rules))
 	}
 	return nil
@@ -59,8 +55,21 @@ func RemovePolicies(ctx context.Context, enf *casbin.SyncedEnforcer, rules [][]s
 	if len(rules) == 0 {
 		return nil
 	}
-	if _, err := enf.RemovePolicies(rules); err != nil {
-		return emperror.WrapIfWithDetails(err, "failed to remove policies", "count", len(rules))
+	for _, rule := range rules {
+		present, err := enf.HasPolicy(rule)
+		if err != nil {
+			return emperror.WrapIf(err, "failed to inspect policies")
+		}
+		if !present {
+			continue
+		}
+		removed, err := enf.RemovePolicy(rule)
+		if err != nil {
+			return emperror.WrapIfWithDetails(err, "failed to remove policies", "rule", rule)
+		}
+		if !removed {
+			return emperror.NewWithDetails("policy was not removed", "rule", rule)
+		}
 	}
 	return nil
 }
@@ -73,7 +82,7 @@ func AddGroupPolicies(ctx context.Context, enf *casbin.SyncedEnforcer, rules [][
 	if len(rules) == 0 {
 		return nil
 	}
-	if _, err := enf.AddGroupingPolicies(rules); err != nil {
+	if _, err := enf.AddGroupingPoliciesEx(rules); err != nil {
 		return emperror.WrapIfWithDetails(err, "failed to add grouping policies", "count", len(rules))
 	}
 	return nil
@@ -87,8 +96,21 @@ func RemoveGroupPolicies(ctx context.Context, enf *casbin.SyncedEnforcer, rules 
 	if len(rules) == 0 {
 		return nil
 	}
-	if _, err := enf.RemoveGroupingPolicies(rules); err != nil {
-		return emperror.WrapIfWithDetails(err, "failed to remove grouping policies", "count", len(rules))
+	for _, rule := range rules {
+		present, err := enf.HasGroupingPolicy(rule)
+		if err != nil {
+			return emperror.WrapIf(err, "failed to inspect grouping policies")
+		}
+		if !present {
+			continue
+		}
+		removed, err := enf.RemoveGroupingPolicy(rule)
+		if err != nil {
+			return emperror.WrapIfWithDetails(err, "failed to remove grouping policies", "rule", rule)
+		}
+		if !removed {
+			return emperror.NewWithDetails("grouping policy was not removed", "rule", rule)
+		}
 	}
 	return nil
 }

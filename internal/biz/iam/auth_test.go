@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -200,6 +201,82 @@ func TestAuthUseCase_RefreshToken(t *testing.T) {
 		_, err := authUC.RefreshToken(ctx, refreshToken)
 		require.Error(t, err)
 		assert.True(t, errorx.IsCode(err, errorx.CodeTokenInvalid))
+	})
+}
+
+func TestAuthUseCase_LoginLockout(t *testing.T) {
+	ctx := context.Background()
+	userRepo := newMockUserRepo()
+	roleRepo := newMockRoleRepo()
+	tokenMgr, err := NewTokenManager(TokenConfig{})
+	require.NoError(t, err)
+	authUC := NewAuthUseCaseWithConfig(userRepo, roleRepo, tokenMgr, nil, AuthUseCaseConfig{
+		MaxFailedAttempts: 3,
+		LockDuration:      time.Hour,
+	})
+	userUC := NewUserUseCase(userRepo, roleRepo, nil)
+	userUC.SetAuthUseCase(authUC)
+
+	role, _ := roleRepo.Create(ctx, &Role{Name: "LockRole"})
+	_, err = userUC.Create(ctx, &User{
+		Username: "lock_user",
+		RoleID:   role.ID,
+		IsActive: true,
+	}, "password123")
+	require.NoError(t, err)
+
+	t.Run("wrong passwords lock the account at threshold", func(t *testing.T) {
+		for i := 0; i < 2; i++ {
+			_, err := authUC.Login(ctx, "lock_user", "wrong-password")
+			require.Error(t, err)
+			assert.True(t, errorx.IsCode(err, errorx.CodeAuthFailed))
+		}
+
+		_, err := authUC.Login(ctx, "lock_user", "wrong-password")
+		require.Error(t, err)
+		assert.True(t, errorx.IsCode(err, errorx.CodeAccountLocked))
+
+		// Even the correct password is rejected while locked.
+		_, err = authUC.Login(ctx, "lock_user", "password123")
+		require.Error(t, err)
+		assert.True(t, errorx.IsCode(err, errorx.CodeAccountLocked))
+	})
+
+	t.Run("lock expires when the counter is cleared", func(t *testing.T) {
+		delete(userRepo.loginFailures, "lock_user")
+		res, err := authUC.Login(ctx, "lock_user", "password123")
+		require.NoError(t, err)
+		assert.NotEmpty(t, res.TokenPair.AccessToken)
+	})
+
+	t.Run("successful login clears previous failures", func(t *testing.T) {
+		_, _ = authUC.Login(ctx, "lock_user", "wrong-password")
+		_, _ = authUC.Login(ctx, "lock_user", "wrong-password")
+		require.Equal(t, int64(2), userRepo.loginFailures["lock_user"])
+
+		_, err := authUC.Login(ctx, "lock_user", "password123")
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), userRepo.loginFailures["lock_user"])
+	})
+
+	t.Run("unknown usernames share the same lockout behaviour", func(t *testing.T) {
+		for i := 0; i < 2; i++ {
+			_, err := authUC.Login(ctx, "ghost", "wrong-password")
+			require.Error(t, err)
+			assert.True(t, errorx.IsCode(err, errorx.CodeAuthFailed))
+		}
+		_, err := authUC.Login(ctx, "ghost", "wrong-password")
+		require.Error(t, err)
+		assert.True(t, errorx.IsCode(err, errorx.CodeAccountLocked))
+	})
+
+	t.Run("lockout store failure is fail-closed", func(t *testing.T) {
+		userRepo.loginFailureErr = errors.New("cache down")
+		defer func() { userRepo.loginFailureErr = nil }()
+
+		_, err := authUC.Login(ctx, "lock_user", "password123")
+		require.Error(t, err)
+		assert.True(t, errorx.IsCode(err, errorx.CodeCacheError))
 	})
 }
 

@@ -3,8 +3,10 @@ package iam
 import (
 	"context"
 	"crypto"
-	"crypto/rand"
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/rsa"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -92,6 +94,58 @@ func WithSigningKey(privKey crypto.PrivateKey, pubKey crypto.PublicKey, kid ...s
 	}
 }
 
+func WithIssuer(issuer string) Option {
+	return func(o *Options) { o.Issuer = issuer }
+}
+
+func WithAudience(audience string) Option {
+	return func(o *Options) { o.Audience = audience }
+}
+
+func signingMethodMatchesKey(method jwt.SigningMethod, priv crypto.PrivateKey, pub crypto.PublicKey) error {
+	switch method.Alg() {
+	case jwt.SigningMethodRS256.Alg(), jwt.SigningMethodRS384.Alg(), jwt.SigningMethodRS512.Alg(), jwt.SigningMethodPS256.Alg(), jwt.SigningMethodPS384.Alg(), jwt.SigningMethodPS512.Alg():
+		if _, ok := priv.(*rsa.PrivateKey); !ok {
+			return fmt.Errorf("jwt method %s requires RSA signing key", method.Alg())
+		}
+		if _, ok := pub.(*rsa.PublicKey); !ok {
+			return fmt.Errorf("jwt method %s requires RSA verification key", method.Alg())
+		}
+	case jwt.SigningMethodES256.Alg(), jwt.SigningMethodES384.Alg(), jwt.SigningMethodES512.Alg():
+		if _, ok := priv.(*ecdsa.PrivateKey); !ok {
+			return fmt.Errorf("jwt method %s requires ECDSA signing key", method.Alg())
+		}
+		if _, ok := pub.(*ecdsa.PublicKey); !ok {
+			return fmt.Errorf("jwt method %s requires ECDSA verification key", method.Alg())
+		}
+	case jwt.SigningMethodEdDSA.Alg():
+		if _, ok := priv.(ed25519.PrivateKey); !ok {
+			return fmt.Errorf("jwt method %s requires Ed25519 signing key", method.Alg())
+		}
+		if _, ok := pub.(ed25519.PublicKey); !ok {
+			return fmt.Errorf("jwt method %s requires Ed25519 verification key", method.Alg())
+		}
+	default:
+		return fmt.Errorf("unsupported JWT signing method %q", method.Alg())
+	}
+	return nil
+}
+
+func publicKeysEqual(a, b crypto.PublicKey) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	ader, err := x509.MarshalPKIXPublicKey(a)
+	if err != nil {
+		return false
+	}
+	bder, err := x509.MarshalPKIXPublicKey(b)
+	if err != nil {
+		return false
+	}
+	return string(ader) == string(bder)
+}
+
 // repoTokenVersionStore 适配器：将 biz.UserRepo 桥接为 auth.TokenVersionStore
 type repoTokenVersionStore struct {
 	repo biziam.UserRepo
@@ -126,32 +180,39 @@ func New(opts Options) (*Server, error) {
 	if opts.Bootstrap == nil {
 		opts.Bootstrap = &conf.Bootstrap{}
 	}
+	if opts.Bootstrap.Security == nil {
+		opts.Bootstrap.Security = &conf.SecurityConfig{}
+	}
+	if opts.Issuer == "" {
+		opts.Issuer = opts.Bootstrap.Security.Token.Issuer
+	}
 	if opts.Issuer == "" {
 		opts.Issuer = "iam.grain.com"
+	}
+	if opts.Audience == "" {
+		opts.Audience = opts.Bootstrap.Security.Token.Audience
 	}
 	if opts.Audience == "" {
 		opts.Audience = "grain-api"
 	}
 
-	// 1. 初始化 JWT 密钥对
 	if opts.SigningKey == nil {
-		opts.Logger.Info("iam server: no signing key configured, generating in-memory RSA key pair")
-		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			return nil, fmt.Errorf("iam server: failed to generate RSA key: %w", err)
-		}
-		opts.SigningKey = rsaKey
-		opts.VerifyKey = &rsaKey.PublicKey
-	} else if opts.VerifyKey == nil {
-		pub, err := cryptoutil.ExtractPublicKey(opts.SigningKey)
-		if err != nil {
-			return nil, fmt.Errorf("iam server: failed to extract public key: %w", err)
-		}
-		opts.VerifyKey = pub
+		return nil, fmt.Errorf("iam server: stable JWT signing key is required; configure security.token.private_key")
 	}
-
-	if opts.KeyID == "" && opts.VerifyKey != nil {
-		kid, _ := auth.KeyID(opts.VerifyKey)
+	derivedPublicKey, err := cryptoutil.ExtractPublicKey(opts.SigningKey)
+	if err != nil {
+		return nil, fmt.Errorf("iam server: failed to extract public key: %w", err)
+	}
+	if opts.VerifyKey == nil {
+		opts.VerifyKey = derivedPublicKey
+	} else if !publicKeysEqual(derivedPublicKey, opts.VerifyKey) {
+		return nil, fmt.Errorf("iam server: configured JWT public key does not match signing key")
+	}
+	if opts.KeyID == "" {
+		kid, err := auth.KeyID(opts.VerifyKey)
+		if err != nil {
+			return nil, fmt.Errorf("iam server: failed to derive JWT key ID: %w", err)
+		}
 		opts.KeyID = kid
 	}
 
@@ -189,8 +250,14 @@ func New(opts Options) (*Server, error) {
 		refreshDuration = 7 * 24 * time.Hour
 	}
 
-	// 4. 初始化持久层 Data 与各个 Repo
-	jwtConf := auth.NewJWTConfig(opts.Issuer, opts.Audience, opts.VerifyKey, jwt.SigningMethodRS256)
+	method, err := conf.SigningMethod(opts.Bootstrap.Security.Token.AccessMethod)
+	if err != nil {
+		return nil, err
+	}
+	if err := signingMethodMatchesKey(method, opts.SigningKey, opts.VerifyKey); err != nil {
+		return nil, err
+	}
+	jwtConf := auth.NewJWTConfig(opts.Issuer, opts.Audience, opts.VerifyKey, method)
 	data := dataiam.NewData(opts.GormDB, opts.UserCache, opts.Enforcer, dbTimeout, dbSlow, jwtConf)
 
 	userRepo := dataiam.NewUserRepo(data, opts.Logger, refreshDuration, opts.UserCache)
@@ -200,7 +267,7 @@ func New(opts Options) (*Server, error) {
 	apiRepo := dataiam.NewApiRepo(data, opts.Logger)
 
 	// 5. 初始化 TokenVersionStore 与 Authenticator
-	var tokenStore auth.TokenVersionStore = opts.TokenStore
+	tokenStore := opts.TokenStore
 	if tokenStore == nil {
 		tokenStore = &repoTokenVersionStore{repo: userRepo}
 	}
@@ -216,7 +283,7 @@ func New(opts Options) (*Server, error) {
 		Audience:        opts.Audience,
 		AccessDuration:  accessDuration,
 		RefreshDuration: refreshDuration,
-		SigningMethod:   jwt.SigningMethodRS256,
+		SigningMethod:   method,
 		SigningKey:      opts.SigningKey,
 		VerifyKey:       opts.VerifyKey,
 		KeyID:           opts.KeyID,
@@ -227,12 +294,22 @@ func New(opts Options) (*Server, error) {
 	}
 
 	// 7. 初始化业务层 UseCase 与 Biz 聚合
-	userUC := biziam.NewUserUseCase(userRepo, roleRepo, opts.Logger)
+	passwordPolicy := biziam.PasswordPolicy{
+		StrengthLevel: opts.Bootstrap.Security.Password.StrengthLevel,
+	}
+	if err := passwordPolicy.ValidateLevel(); err != nil {
+		return nil, fmt.Errorf("iam server: %w", err)
+	}
+	userUC := biziam.NewUserUseCase(userRepo, roleRepo, opts.Logger, passwordPolicy)
 	roleUC := biziam.NewRoleUseCase(roleRepo, userRepo, opts.Logger)
 	menuUC := biziam.NewMenuUseCase(menuRepo, opts.Logger, buttonRepo)
 	buttonUC := biziam.NewButtonUseCase(buttonRepo, menuRepo, opts.Logger)
 	apiUC := biziam.NewApiUseCase(apiRepo, opts.Logger)
-	authUC := biziam.NewAuthUseCase(userRepo, roleRepo, tokenMgr, opts.Logger, refreshDuration)
+	authUC := biziam.NewAuthUseCaseWithConfig(userRepo, roleRepo, tokenMgr, opts.Logger, biziam.AuthUseCaseConfig{
+		RefreshTTL:        refreshDuration,
+		MaxFailedAttempts: opts.Bootstrap.Security.Login.MaxFailedAttempts,
+		LockDuration:      opts.Bootstrap.Security.Login.LockDuration,
+	})
 	biz := biziam.NewBiz(userUC, roleUC, menuUC, buttonUC, apiUC, authUC)
 
 	// 8. 初始化服务层 Service
@@ -380,10 +457,13 @@ func InitServer(
 	if engine != nil {
 		srv.RegisterRoutes(engine)
 		if count, syncErr := srv.SyncGinRoutes(ctx, engine.Routes()); syncErr != nil {
-			logger.WarnContext(ctx, "failed to sync gin routes into IAM", slog.Any("error", syncErr))
+			return nil, fmt.Errorf("sync gin routes: %w", syncErr)
 		} else if count > 0 {
 			logger.InfoContext(ctx, "synced gin routes into IAM catalog", slog.Int("synced_count", count))
 		}
+	}
+	if err := srv.Data.ReconcileIAMPolicies(ctx); err != nil {
+		return nil, err
 	}
 
 	return srv, nil

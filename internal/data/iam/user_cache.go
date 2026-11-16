@@ -37,6 +37,17 @@ type UserCache interface {
 	// RotateRefreshTokenFamily performs atomic refresh token family rotation and replay detection.
 	// Returns RotateFamilySuccess, RotateFamilyCompromised, or RotateFamilyFailed.
 	RotateRefreshTokenFamily(ctx context.Context, familyID, oldJTI, newJTI string, userID uint64, ttl time.Duration) (biz.RotateFamilyResult, error)
+
+	// IncrementLoginFailure increments the failed-login counter for a username
+	// and returns the new count. The counter expires after ttl.
+	IncrementLoginFailure(ctx context.Context, username string, ttl time.Duration) (int64, error)
+
+	// GetLoginFailure returns the current failed-login count for a username.
+	// A missing or expired counter returns 0.
+	GetLoginFailure(ctx context.Context, username string) (int64, error)
+
+	// DeleteLoginFailure clears the failed-login counter for a username.
+	DeleteLoginFailure(ctx context.Context, username string) error
 }
 
 func refreshFamilyKey(familyID string) string {
@@ -51,6 +62,10 @@ func tokenVersionKey(userID uint64) string {
 	return fmt.Sprintf("iam:user-token-version:%d", userID)
 }
 
+func loginFailureKey(username string) string {
+	return "iam:login-failure:" + username
+}
+
 // ==================== Redis Implementation ====================
 
 var updateTokenVersionScript = redis.NewScript(`
@@ -61,6 +76,12 @@ var updateTokenVersionScript = redis.NewScript(`
 		return 1
 	end
 	return 0
+`)
+
+var incrementLoginFailureScript = redis.NewScript(`
+	local count = redis.call('INCR', KEYS[1])
+	redis.call('EXPIRE', KEYS[1], ARGV[1])
+	return count
 `)
 
 var rotateRefreshTokenFamilyScript = redis.NewScript(`
@@ -180,6 +201,38 @@ func (c *redisUserCache) RotateRefreshTokenFamily(ctx context.Context, familyID,
 	return biz.RotateFamilySuccess, nil
 }
 
+func (c *redisUserCache) IncrementLoginFailure(ctx context.Context, username string, ttl time.Duration) (int64, error) {
+	if c.client == nil {
+		return 0, errors.New("redis client is not configured")
+	}
+	ttlSeconds := int64(ttl / time.Second)
+	if ttlSeconds < 1 {
+		ttlSeconds = 1
+	}
+	return incrementLoginFailureScript.Run(ctx, c.client, []string{loginFailureKey(username)}, ttlSeconds).Int64()
+}
+
+func (c *redisUserCache) GetLoginFailure(ctx context.Context, username string) (int64, error) {
+	if c.client == nil {
+		return 0, errors.New("redis client is not configured")
+	}
+	count, err := c.client.Get(ctx, loginFailureKey(username)).Int64()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return count, nil
+}
+
+func (c *redisUserCache) DeleteLoginFailure(ctx context.Context, username string) error {
+	if c.client == nil {
+		return errors.New("redis client is not configured")
+	}
+	return c.client.Del(ctx, loginFailureKey(username)).Err()
+}
+
 // ==================== Memory Implementation ====================
 
 type tokenVersionItem struct {
@@ -194,11 +247,20 @@ type refreshFamilyItem struct {
 	expireAt    time.Time
 }
 
+type loginFailureItem struct {
+	count    int64
+	expireAt time.Time
+}
+
+// maxMemoryLoginFailures bounds memory used by arbitrary username probes.
+const maxMemoryLoginFailures = 10000
+
 type memoryUserCache struct {
 	mu             sync.RWMutex
 	tokenVersions  map[uint64]tokenVersionItem
 	consumedTokens map[string]time.Time
 	families       map[string]refreshFamilyItem
+	loginFailures  map[string]loginFailureItem
 	stopCh         chan struct{}
 	stopOnce       sync.Once
 }
@@ -211,6 +273,7 @@ func NewMemoryUserCache(cleanupInterval ...time.Duration) UserCache {
 		tokenVersions:  make(map[uint64]tokenVersionItem),
 		consumedTokens: make(map[string]time.Time),
 		families:       make(map[string]refreshFamilyItem),
+		loginFailures:  make(map[string]loginFailureItem),
 		stopCh:         make(chan struct{}),
 	}
 
@@ -268,6 +331,11 @@ func (m *memoryUserCache) cleanup() {
 	for k, fam := range m.families {
 		if !fam.expireAt.IsZero() && now.After(fam.expireAt) {
 			delete(m.families, k)
+		}
+	}
+	for k, item := range m.loginFailures {
+		if !item.expireAt.IsZero() && now.After(item.expireAt) {
+			delete(m.loginFailures, k)
 		}
 	}
 }
@@ -414,4 +482,72 @@ func (m *memoryUserCache) RotateRefreshTokenFamily(ctx context.Context, familyID
 	m.families[familyID] = fam
 	m.consumedTokens[oldJTI] = expireAt
 	return biz.RotateFamilySuccess, nil
+}
+
+func (m *memoryUserCache) IncrementLoginFailure(ctx context.Context, username string, ttl time.Duration) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	item, exists := m.loginFailures[username]
+	if exists && !item.expireAt.IsZero() && now.After(item.expireAt) {
+		exists = false
+	}
+	if !exists {
+		item = loginFailureItem{}
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	item.count++
+	item.expireAt = now.Add(ttl)
+	m.loginFailures[username] = item
+
+	if len(m.loginFailures) > maxMemoryLoginFailures {
+		for k, it := range m.loginFailures {
+			if !it.expireAt.IsZero() && now.After(it.expireAt) {
+				delete(m.loginFailures, k)
+			}
+		}
+		if len(m.loginFailures) > maxMemoryLoginFailures {
+			for k := range m.loginFailures {
+				if k != username {
+					delete(m.loginFailures, k)
+					break
+				}
+			}
+		}
+	}
+	return item.count, nil
+}
+
+func (m *memoryUserCache) GetLoginFailure(ctx context.Context, username string) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	item, exists := m.loginFailures[username]
+	if !exists {
+		return 0, nil
+	}
+	if !item.expireAt.IsZero() && time.Now().After(item.expireAt) {
+		delete(m.loginFailures, username)
+		return 0, nil
+	}
+	return item.count, nil
+}
+
+func (m *memoryUserCache) DeleteLoginFailure(ctx context.Context, username string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.loginFailures, username)
+	return nil
 }

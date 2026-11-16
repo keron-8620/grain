@@ -23,7 +23,9 @@ import (
 	"grain/internal/conf"
 	dataiam "grain/internal/data/iam"
 	serviceiam "grain/internal/service/iam"
+	"grain/pkg/cryptoutil"
 	"grain/pkg/db"
+	"grain/pkg/errorx"
 )
 
 type testBatchAdapter struct {
@@ -84,10 +86,43 @@ func TestServer_New_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "casbin enforcer is required")
 }
 
+func TestServer_New_RequiresStableSigningKey(t *testing.T) {
+	gormDB := setupTestDB(t)
+	enf := setupTestEnforcer(t)
+
+	_, err := New(Options{GormDB: gormDB, Enforcer: enf})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "signing key")
+
+	priv, pub, err := cryptoutil.GenerateRSAKeyPair(2048)
+	require.NoError(t, err)
+	srv, err := New(Options{GormDB: gormDB, Enforcer: enf, SigningKey: priv, VerifyKey: pub})
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+	assert.NotEmpty(t, srv.TokenManager.KeyID())
+}
+
+func TestServer_New_RejectsMismatchedPublicKey(t *testing.T) {
+	gormDB := setupTestDB(t)
+	enf := setupTestEnforcer(t)
+
+	priv, _, err := cryptoutil.GenerateRSAKeyPair(2048)
+	require.NoError(t, err)
+	_, otherPub, err := cryptoutil.GenerateRSAKeyPair(2048)
+	require.NoError(t, err)
+
+	_, err = New(Options{GormDB: gormDB, Enforcer: enf, SigningKey: priv, VerifyKey: otherPub})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not match")
+}
+
 func TestServer_InitServer_And_E2E(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	gormDB := setupTestDB(t)
 	enf := setupTestEnforcer(t)
+
+	priv, pub, err := cryptoutil.GenerateRSAKeyPair(2048)
+	require.NoError(t, err)
 
 	engine := gin.New()
 	ctx := context.Background()
@@ -102,10 +137,12 @@ func TestServer_InitServer_And_E2E(t *testing.T) {
 				AccessDuration:  time.Hour,
 				RefreshDuration: 24 * time.Hour,
 			},
+			Login:    conf.LoginSecurityConfig{MaxFailedAttempts: 2, LockDuration: time.Hour},
+			Password: conf.PasswordConfig{StrengthLevel: 2},
 		},
 	}
 
-	srv, err := InitServer(ctx, engine, bc, nil, gormDB, enf)
+	srv, err := InitServer(ctx, engine, bc, nil, gormDB, enf, WithSigningKey(priv, pub))
 	require.NoError(t, err)
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Service)
@@ -118,7 +155,15 @@ func TestServer_InitServer_And_E2E(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 2. 创建用户
+	// 2. 创建用户（密码策略 level 2 要求字母+数字）
+	_, err = srv.Biz.User.Create(ctx, &biziam.User{
+		Username: "weak_user",
+		RoleID:   role.ID,
+		IsActive: true,
+	}, "abcdefgh")
+	require.Error(t, err)
+	require.True(t, errorx.IsCode(err, errorx.CodePasswordStrengthFailed))
+
 	user, err := srv.Biz.User.Create(ctx, &biziam.User{
 		Username: "admin_user",
 		RoleID:   role.ID,
@@ -204,4 +249,24 @@ func TestServer_InitServer_And_E2E(t *testing.T) {
 	wJWKS := httptest.NewRecorder()
 	engine.ServeHTTP(wJWKS, reqJWKS)
 	assert.Equal(t, http.StatusOK, wJWKS.Code)
+
+	// 9. 登录失败锁定：阈值 2 次，达到后正确密码也被拒绝
+	badBody, _ := json.Marshal(serviceiam.LoginReq{Username: "admin_user", Password: "wrong-password"})
+	for i := 0; i < 2; i++ {
+		reqBad := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBuffer(badBody))
+		reqBad.Header.Set("Content-Type", "application/json")
+		wBad := httptest.NewRecorder()
+		engine.ServeHTTP(wBad, reqBad)
+		if i == 0 {
+			assert.Equal(t, http.StatusUnauthorized, wBad.Code)
+		} else {
+			assert.Equal(t, http.StatusForbidden, wBad.Code)
+		}
+	}
+
+	reqLocked := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBuffer(loginBody))
+	reqLocked.Header.Set("Content-Type", "application/json")
+	wLocked := httptest.NewRecorder()
+	engine.ServeHTTP(wLocked, reqLocked)
+	assert.Equal(t, http.StatusForbidden, wLocked.Code, "correct password must be rejected while locked")
 }

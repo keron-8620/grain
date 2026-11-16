@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -156,21 +157,31 @@ func (uc *RoleUseCase) Update(ctx context.Context, role *Role) (*Role, error) {
 		return nil, errorx.FromDBError(err)
 	}
 
-	rollback := func() {
+	rollback := func() error {
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
+		var errs []error
 		if _, err := uc.repo.Update(rbCtx, oldRole); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to roll back role model update", slog.Uint64("role_id", role.ID), slog.Any("error", err))
+			errs = append(errs, err)
 		}
-		_ = uc.repo.RemoveGroupPolicy(rbCtx, updated)
-		_ = uc.repo.AddGroupPolicy(rbCtx, oldRole)
+		if err := uc.repo.RemoveGroupPolicy(rbCtx, updated); err != nil {
+			uc.logger.ErrorContext(ctx, "failed to clean up updated role policy", slog.Uint64("role_id", role.ID), slog.Any("error", err))
+			errs = append(errs, err)
+		}
+		if err := uc.repo.AddGroupPolicy(rbCtx, oldRole); err != nil {
+			uc.logger.ErrorContext(ctx, "failed to restore role policy", slog.Uint64("role_id", role.ID), slog.Any("error", err))
+			errs = append(errs, err)
+		}
+		return errors.Join(errs...)
 	}
 
-	_ = uc.repo.RemoveGroupPolicy(ctx, oldRole)
+	if err := uc.repo.RemoveGroupPolicy(ctx, oldRole); err != nil {
+		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "删除旧角色权限策略失败")
+	}
 	if err := uc.repo.AddGroupPolicy(ctx, updated); err != nil {
 		uc.logger.ErrorContext(ctx, "failed to update casbin group policy for role", slog.Uint64("role_id", role.ID), slog.Any("error", err))
-		rollback()
-		return nil, errorx.Wrap(err, errorx.CodeSystemError, "更新角色权限策略失败")
+		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "更新角色权限策略失败")
 	}
 
 	// Revoke sessions for all users belonging to this role so that their privileges are refreshed
@@ -194,7 +205,7 @@ func (uc *RoleUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeInvalidParam.Error("无效的角色ID")
 	}
 
-	role, err := uc.repo.FindByID(ctx, id)
+	role, err := uc.repo.FindByID(ctx, id, "Apis", "Menus", "Buttons")
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
@@ -210,15 +221,14 @@ func (uc *RoleUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeOperationNotAllowed.Error("角色下仍有关联用户，无法删除")
 	}
 
-	if err := uc.repo.Delete(ctx, id); err != nil {
-		return errorx.FromDBError(err)
-	}
-
 	cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	if err := uc.repo.RemoveGroupPolicy(cleanCtx, role); err != nil {
-		uc.logger.ErrorContext(ctx, "failed to remove casbin group policy for role", slog.Uint64("role_id", id), slog.Any("error", err))
 		return errorx.Wrap(err, errorx.CodeSystemError, "删除角色权限策略失败")
+	}
+	if err := uc.repo.Delete(ctx, id); err != nil {
+		restoreErr := uc.repo.AddGroupPolicy(cleanCtx, role)
+		return errorx.Wrap(errors.Join(errorx.FromDBError(err), restoreErr), errorx.CodeSystemError, "删除角色失败")
 	}
 
 	return nil

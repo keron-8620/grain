@@ -267,6 +267,45 @@ func TestRedisUserCache_NilClient(t *testing.T) {
 	assert.Equal(t, biz.RotateFamilyFailed, res)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "redis client is not configured")
+
+	_, err = rc.IncrementLoginFailure(ctx, "alice", time.Minute)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "redis client is not configured")
+
+	_, err = rc.GetLoginFailure(ctx, "alice")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "redis client is not configured")
+
+	err = rc.DeleteLoginFailure(ctx, "alice")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "redis client is not configured")
+}
+
+func TestMemoryUserCache_LoginFailure(t *testing.T) {
+	ctx := context.Background()
+	cache := NewMemoryUserCache(0)
+
+	count, err := cache.GetLoginFailure(ctx, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count)
+
+	for i := int64(1); i <= 3; i++ {
+		count, err = cache.IncrementLoginFailure(ctx, "alice", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, i, count)
+	}
+
+	require.NoError(t, cache.DeleteLoginFailure(ctx, "alice"))
+	count, err = cache.GetLoginFailure(ctx, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count)
+
+	_, err = cache.IncrementLoginFailure(ctx, "bob", 5*time.Millisecond)
+	require.NoError(t, err)
+	time.Sleep(15 * time.Millisecond)
+	count, err = cache.GetLoginFailure(ctx, "bob")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count, "expired counters must reset")
 }
 
 func TestUserRepo_CacheSelection(t *testing.T) {

@@ -277,12 +277,13 @@ func TestApiUseCase_SyncRoutes(t *testing.T) {
 	assert.True(t, repo.addPoliciesCalled)
 	assert.Len(t, repo.lastPoliciesApis, 2)
 
-	// Second sync has nothing new, early returns without calling AddPolicies
+	// Second sync inserts nothing, but still re-applies API policies so a
+	// restart repairs an already-populated catalog.
 	repo.addPoliciesCalled = false
 	count2, err := uc.SyncRoutes(ctx, routes)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count2)
-	assert.False(t, repo.addPoliciesCalled)
+	assert.True(t, repo.addPoliciesCalled)
 
 	// Empty routes
 	emptyCount, err := uc.SyncRoutes(ctx, nil)

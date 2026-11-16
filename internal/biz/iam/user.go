@@ -17,6 +17,7 @@ type User struct {
 	Username     string
 	Password     string
 	IsActive     bool
+	IsActiveSet  bool
 	RoleID       uint64
 	Role         *Role
 	TokenVersion uint64
@@ -57,6 +58,11 @@ type UserRepo interface {
 	EnsureTokenVersionCache(ctx context.Context, userID uint64, version uint64) error
 	ConsumeRefreshToken(ctx context.Context, jti string, ttl time.Duration) (bool, error)
 	RotateRefreshTokenFamily(ctx context.Context, familyID, oldJTI, newJTI string, userID uint64, ttl time.Duration) (RotateFamilyResult, error)
+
+	// Login failure counters back the account lockout policy.
+	GetLoginFailure(ctx context.Context, username string) (int64, error)
+	IncrementLoginFailure(ctx context.Context, username string, ttl time.Duration) (int64, error)
+	ClearLoginFailures(ctx context.Context, username string) error
 }
 
 // RotateFamilyResult represents the outcome of a token family rotation operation.
@@ -70,23 +76,30 @@ const (
 
 // UserUseCase handles user management, password lifecycle, and account session controls.
 type UserUseCase struct {
-	repo     UserRepo
-	roleRepo RoleRepo
-	logger   *slog.Logger
-	hasher   *cryptoutil.BcryptHasher
-	auth     *AuthUseCase
+	repo           UserRepo
+	roleRepo       RoleRepo
+	logger         *slog.Logger
+	hasher         *cryptoutil.BcryptHasher
+	auth           *AuthUseCase
+	passwordPolicy PasswordPolicy
 }
 
 // NewUserUseCase creates a new UserUseCase instance.
-func NewUserUseCase(repo UserRepo, roleRepo RoleRepo, logger *slog.Logger) *UserUseCase {
+// An optional PasswordPolicy controls password strength requirements.
+func NewUserUseCase(repo UserRepo, roleRepo RoleRepo, logger *slog.Logger, policies ...PasswordPolicy) *UserUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	policy := PasswordPolicy{}
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
 	return &UserUseCase{
-		repo:     repo,
-		roleRepo: roleRepo,
-		logger:   logger,
-		hasher:   cryptoutil.NewBcryptHasher(0),
+		repo:           repo,
+		roleRepo:       roleRepo,
+		logger:         logger,
+		hasher:         cryptoutil.NewBcryptHasher(0),
+		passwordPolicy: policy,
 	}
 }
 
@@ -105,8 +118,8 @@ func (uc *UserUseCase) Create(ctx context.Context, user *User, rawPassword strin
 	if username == "" {
 		return nil, errorx.CodeMissingParam.Error("用户名不能为空")
 	}
-	if len(rawPassword) < 6 {
-		return nil, errorx.CodePasswordStrengthFailed.Error("密码长度不能少于6位")
+	if err := uc.passwordPolicy.Validate(rawPassword); err != nil {
+		return nil, err
 	}
 	if user.RoleID == 0 {
 		return nil, errorx.CodeMissingParam.Error("用户必须分配角色")
@@ -175,12 +188,12 @@ func (uc *UserUseCase) Update(ctx context.Context, user *User) (*User, error) {
 		if existing != nil && existing.ID != user.ID {
 			return nil, errorx.CodeDuplicatedKey.Error("用户名已被使用")
 		}
-		user.Username = username
-	} else if username == "" {
-		user.Username = oldUser.Username
 	}
-
-	profileChanged := (username != "" && username != oldUser.Username) || (user.RoleID > 0 && user.RoleID != oldUser.RoleID)
+	if username == "" {
+		user.Username = oldUser.Username
+	} else {
+		user.Username = username
+	}
 
 	if user.RoleID > 0 && user.RoleID != oldUser.RoleID && uc.roleRepo != nil {
 		role, err := uc.roleRepo.FindByID(ctx, user.RoleID)
@@ -190,17 +203,19 @@ func (uc *UserUseCase) Update(ctx context.Context, user *User) (*User, error) {
 		if role == nil {
 			return nil, errorx.CodeRecordNotFound.Error("指定角色不存在")
 		}
-	} else if user.RoleID == 0 {
+	} else {
 		user.RoleID = oldUser.RoleID
 	}
 
-	// Preserve IsActive if this is a profile update (username or role provided) and IsActive was left as zero-value (false) while oldUser is active.
-	// This prevents partial profile updates from accidentally disabling an active user.
-	if profileChanged && !user.IsActive && oldUser.IsActive {
+	if !user.IsActiveSet && (username != "" || user.RoleID > 0 || user.Password != "") {
 		user.IsActive = oldUser.IsActive
 	}
 
-	if user.Password != "" {
+	passwordChanged := user.Password != ""
+	if passwordChanged {
+		if err := uc.passwordPolicy.Validate(user.Password); err != nil {
+			return nil, err
+		}
 		hashed, err := uc.hasher.HashString(user.Password)
 		if err != nil {
 			return nil, errorx.Wrap(err, errorx.CodeSystemError, "密码加密处理失败")
@@ -213,15 +228,27 @@ func (uc *UserUseCase) Update(ctx context.Context, user *User) (*User, error) {
 		return nil, errorx.FromDBError(err)
 	}
 
-	// If role changed or user was disabled, revoke all active sessions
-	if (user.RoleID > 0 && user.RoleID != oldUser.RoleID) || (oldUser.IsActive && !user.IsActive) {
+	if user.RoleID != oldUser.RoleID || (oldUser.IsActive && !user.IsActive) || passwordChanged {
 		if revErr := uc.repo.IncrementTokenVersion(ctx, user.ID); revErr != nil {
-			uc.logger.WarnContext(ctx, "failed to revoke user sessions on profile update", slog.Uint64("user_id", user.ID), slog.Any("error", revErr))
+			uc.logger.ErrorContext(ctx, "failed to revoke user sessions on profile update", slog.Uint64("user_id", user.ID), slog.Any("error", revErr))
+			return nil, errorx.FromDBError(revErr)
 		}
+	}
+	if passwordChanged {
+		uc.clearLoginFailures(ctx, user.Username)
 	}
 
 	ret := *updated
 	return ret.Sanitize(), nil
+}
+
+func (uc *UserUseCase) clearLoginFailures(ctx context.Context, username string) {
+	if username == "" {
+		return
+	}
+	if err := uc.repo.ClearLoginFailures(ctx, username); err != nil {
+		uc.logger.WarnContext(ctx, "failed to clear login failure counter", slog.String("username", username), slog.Any("error", err))
+	}
 }
 
 // Delete deletes a user by ID.
@@ -306,8 +333,8 @@ func (uc *UserUseCase) ChangePassword(ctx context.Context, userID uint64, oldPas
 	if oldPassword == "" || newPassword == "" {
 		return errorx.CodeMissingParam.Error("原密码和新密码不能为空")
 	}
-	if len(newPassword) < 6 {
-		return errorx.CodePasswordStrengthFailed.Error("新密码长度不能少于6位")
+	if err := uc.passwordPolicy.Validate(newPassword); err != nil {
+		return err
 	}
 
 	user, err := uc.repo.FindByID(ctx, userID)
@@ -339,9 +366,10 @@ func (uc *UserUseCase) ChangePassword(ctx context.Context, userID uint64, oldPas
 		return errorx.FromDBError(err)
 	}
 
-	// Revoke all previous active sessions
-	_ = uc.repo.IncrementTokenVersion(ctx, userID)
-
+	if revErr := uc.repo.IncrementTokenVersion(ctx, userID); revErr != nil {
+		return errorx.FromDBError(revErr)
+	}
+	uc.clearLoginFailures(ctx, user.Username)
 	return nil
 }
 
@@ -350,8 +378,8 @@ func (uc *UserUseCase) ResetPassword(ctx context.Context, userID uint64, newPass
 	if userID == 0 {
 		return errorx.CodeInvalidParam.Error("无效的用户ID")
 	}
-	if len(newPassword) < 6 {
-		return errorx.CodePasswordStrengthFailed.Error("新密码长度不能少于6位")
+	if err := uc.passwordPolicy.Validate(newPassword); err != nil {
+		return err
 	}
 
 	user, err := uc.repo.FindByID(ctx, userID)
@@ -378,7 +406,10 @@ func (uc *UserUseCase) ResetPassword(ctx context.Context, userID uint64, newPass
 		return errorx.FromDBError(err)
 	}
 
-	_ = uc.repo.IncrementTokenVersion(ctx, userID)
+	if revErr := uc.repo.IncrementTokenVersion(ctx, userID); revErr != nil {
+		return errorx.FromDBError(revErr)
+	}
+	uc.clearLoginFailures(ctx, user.Username)
 
 	return nil
 }
@@ -412,7 +443,11 @@ func (uc *UserUseCase) UpdateStatus(ctx context.Context, userID uint64, isActive
 	}
 
 	if !isActive {
-		_ = uc.repo.IncrementTokenVersion(ctx, userID)
+		if revErr := uc.repo.IncrementTokenVersion(ctx, userID); revErr != nil {
+			return errorx.FromDBError(revErr)
+		}
+	} else {
+		uc.clearLoginFailures(ctx, user.Username)
 	}
 
 	return nil

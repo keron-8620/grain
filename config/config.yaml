@@ -1,0 +1,83 @@
+# grain 开发/生产配置模板
+#
+# 该文件可直接用于本地开发。生产环境请务必：
+#   1. 替换 security.token.private_key 为受控 Secret 中注入的私钥路径；
+#   2. 使用 `grain -migrate` 作为独立部署步骤执行数据库迁移；
+#   3. 按需启用 redis，以便多实例共享刷新令牌轮换与吊销状态；
+#   4. 限制 cors.allow_origins 并开启 security.host_guard。
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  swagger: true
+  enable_metrics: false
+  enable_pprof: false
+  trusted_proxies: []
+  rate:
+    rps: 100
+    burst: 200
+  timeout:
+    request: 30s
+    shutdown: 10s
+  ssl:
+    enable: false
+    crt_path: ""
+    key_path: ""
+
+database:
+  type: sqlite
+  dsn: grain.db
+  log_sql: false
+  slow_threshold: 200ms
+  max_idle_conns: 10
+  max_open_conns: 100
+
+# 多实例部署时启用 Redis；单机可保持 enable: false。
+redis:
+  enable: false
+  addr: "127.0.0.1:6379"
+  username: ""
+  password: ""
+  db: 0
+
+cors:
+  allow_origins:
+    - "*"
+  allow_credentials: false
+
+log:
+  level: info
+  format: text
+  enable_stdout: true
+  enable_file: false
+
+security:
+  host_guard:
+    enable: false
+    trusted_hosts: []
+  timestamp:
+    check_timestamp: false
+    tolerance: 300s
+    future_tolerance: 60s
+  token:
+    access_duration: 2h
+    refresh_duration: 168h
+    issuer: "iam.grain.com"
+    audience: "grain-api"
+    access_method: "RS256"
+    # 当前访问令牌与刷新令牌使用同一签名算法；如需配置，必须与 access_method 一致。
+    refresh_method: "RS256"
+    # 开发用私钥；生产必须替换为由 Secret/文件挂载提供的私钥。
+    private_key: "dev-signing-key.pem"
+    # public_key 可选；留空时由私钥推导。
+    public_key: ""
+    key_id: ""
+  login:
+    # 连续失败达到该次数后锁定账号；0 表示关闭锁定。
+    max_failed_attempts: 5
+    # 锁定时长；锁定期间即使密码正确也会被拒绝。
+    lock_duration: 15m
+  password:
+    # 0=至少6位；1=至少8位；2=至少8位且含字母和数字；
+    # 3=至少10位且含大写、小写、数字和特殊字符。
+    strength_level: 1

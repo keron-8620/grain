@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"strings"
@@ -243,21 +244,31 @@ func (uc *MenuUseCase) Update(ctx context.Context, menu *Menu) (*Menu, error) {
 		return nil, errorx.FromDBError(err)
 	}
 
-	rollback := func() {
+	rollback := func() error {
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
+		var errs []error
 		if _, err := uc.repo.Update(rbCtx, oldMenu); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to roll back menu model update", slog.Uint64("menu_id", menu.ID), slog.Any("error", err))
+			errs = append(errs, err)
 		}
-		_ = uc.repo.RemoveGroupPolicy(rbCtx, updated, false)
-		_ = uc.repo.AddGroupPolicy(rbCtx, oldMenu)
+		if err := uc.repo.RemoveGroupPolicy(rbCtx, updated, false); err != nil {
+			uc.logger.ErrorContext(ctx, "failed to clean up updated menu policy", slog.Uint64("menu_id", menu.ID), slog.Any("error", err))
+			errs = append(errs, err)
+		}
+		if err := uc.repo.AddGroupPolicy(rbCtx, oldMenu); err != nil {
+			uc.logger.ErrorContext(ctx, "failed to restore menu policy", slog.Uint64("menu_id", menu.ID), slog.Any("error", err))
+			errs = append(errs, err)
+		}
+		return errors.Join(errs...)
 	}
 
-	_ = uc.repo.RemoveGroupPolicy(ctx, oldMenu, false)
+	if err := uc.repo.RemoveGroupPolicy(ctx, oldMenu, false); err != nil {
+		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "删除旧菜单权限策略失败")
+	}
 	if err := uc.repo.AddGroupPolicy(ctx, updated); err != nil {
 		uc.logger.ErrorContext(ctx, "failed to update casbin group policy for menu", slog.Uint64("menu_id", menu.ID), slog.Any("error", err))
-		rollback()
-		return nil, errorx.Wrap(err, errorx.CodeSystemError, "更新菜单权限策略失败")
+		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "更新菜单权限策略失败")
 	}
 
 	return updated, nil
@@ -269,7 +280,7 @@ func (uc *MenuUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeInvalidParam.Error("无效的菜单ID")
 	}
 
-	menu, err := uc.repo.FindByID(ctx, id)
+	menu, err := uc.repo.FindByID(ctx, id, "Apis")
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
@@ -301,15 +312,20 @@ func (uc *MenuUseCase) Delete(ctx context.Context, id uint64) error {
 		}
 	}
 
-	if err := uc.repo.Delete(ctx, id); err != nil {
-		return errorx.FromDBError(err)
-	}
-
 	cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if err := uc.repo.RemoveGroupPolicy(cleanCtx, menu, true); err != nil {
-		uc.logger.ErrorContext(ctx, "failed to remove casbin group policy for menu", slog.Uint64("menu_id", id), slog.Any("error", err))
+	// Remove the menu's outgoing grants first. If the DB delete fails we can
+	// restore them; if the later cleanup of inherited edges fails, the menu no
+	// longer leads to any permission and therefore cannot widen access.
+	if err := uc.repo.RemoveGroupPolicy(cleanCtx, menu, false); err != nil {
 		return errorx.Wrap(err, errorx.CodeSystemError, "删除菜单权限策略失败")
+	}
+	if err := uc.repo.Delete(ctx, id); err != nil {
+		restoreErr := uc.repo.AddGroupPolicy(cleanCtx, menu)
+		return errorx.Wrap(errors.Join(errorx.FromDBError(err), restoreErr), errorx.CodeSystemError, "删除菜单失败")
+	}
+	if err := uc.repo.RemoveGroupPolicy(cleanCtx, menu, true); err != nil {
+		return errorx.Wrap(err, errorx.CodeSystemError, "清理菜单关联权限策略失败")
 	}
 
 	return nil

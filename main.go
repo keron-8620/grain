@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto"
 	"crypto/subtle"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -18,12 +20,12 @@ import (
 
 	"github.com/casbin/casbin/v3"
 	"github.com/casbin/casbin/v3/model"
-	stringadapter "github.com/casbin/casbin/v3/persist/string-adapter"
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-yaml"
 	"github.com/joho/godotenv"
 	"github.com/patrickmn/go-cache"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 	"github.com/robfig/cron/v3"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -32,8 +34,11 @@ import (
 
 	"grain/docs"
 	"grain/internal/conf"
+	dataiam "grain/internal/data/iam"
 	"grain/internal/middleware"
 	iamserver "grain/internal/server/iam"
+	"grain/pkg/auth"
+	"grain/pkg/cryptoutil"
 	"grain/pkg/db"
 	"grain/pkg/logx"
 )
@@ -53,10 +58,10 @@ var (
 )
 
 func init() {
-	flag.StringVar(&flagconf, "conf", "configs", "config path, eg: -conf configs")
+	flag.StringVar(&flagconf, "conf", "config/config.yaml", "config file path, eg: -conf config/config.yaml")
 	flag.BoolVar(&showVersion, "v", false, "print version information and exit")
-	flag.BoolVar(&migrateOnly, "migrate", false, "apply versioned database migrations and exit (production schema bootstrap)")
-	flag.StringVar(&execSqlPath, "exec-sql", "", "执行SQL文件路径")
+	flag.BoolVar(&migrateOnly, "migrate", false, "apply IAM schema migrations and exit (production schema bootstrap)")
+	flag.StringVar(&execSqlPath, "exec-sql", "", "execute an SQL file and exit")
 }
 
 // @title artweb API
@@ -83,14 +88,21 @@ func main() {
 		return
 	}
 
+	if err := run(); err != nil {
+		log.Printf("FATAL: %v", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	// .env 仅用于本地开发；生产环境可直接通过进程环境或 Secret 注入。
 	if err := godotenv.Load(filepath.Join(conf.BaseDir, ".env")); err != nil && !os.IsNotExist(err) {
-		log.Fatalf("加载环境变量失败: %v", err)
+		return fmt.Errorf("加载环境变量失败: %w", err)
 	}
 
-	bc, confErr := loadConf(flagconf)
-	if confErr != nil {
-		log.Fatal(confErr.Error())
+	bc, err := loadConf(flagconf)
+	if err != nil {
+		return err
 	}
 
 	logOpts := bc.Log
@@ -101,9 +113,9 @@ func main() {
 		logOpts.Filename = filepath.Join(conf.LogDir, "server.log")
 	}
 
-	logger, logCloser, logErr := logx.New(logOpts)
-	if logErr != nil {
-		log.Fatalf("初始化系统日志失败: %v", logErr)
+	logger, logCloser, err := logx.New(logOpts)
+	if err != nil {
+		return fmt.Errorf("初始化系统日志失败: %w", err)
 	}
 	defer func() {
 		if err := logCloser(); err != nil {
@@ -122,30 +134,74 @@ func main() {
 		IgnoreRecordNotFoundError: true,
 		BaseLogger:                logger,
 	})
-	gormDB, gormErr := db.NewGormDBContext(ctx, bc.Database, gc)
-	if gormErr != nil {
-		logger.Error("数据库初始化连接失败", slog.Any("error", gormErr))
-		return
+	gormDB, err := db.NewGormDBContext(ctx, bc.Database, gc)
+	if err != nil {
+		return fmt.Errorf("数据库初始化连接失败: %w", err)
 	}
-	defer db.CloseGormDB(gormDB)
+	defer func() {
+		if err := db.CloseGormDB(gormDB); err != nil {
+			logger.Warn("关闭数据库连接失败", slog.Any("error", err))
+		}
+	}()
 
-	cm, rbacModelErr := model.NewModelFromString(conf.DefaultRBACModel)
-	if rbacModelErr != nil {
-		logger.Error("创建Casbin模型失败", slog.Any("error", rbacModelErr))
-		return
-	}
-	adapter := stringadapter.NewAdapter("p, admin, /api/v1/*, GET")
-	enforcer, enfErr := casbin.NewSyncedEnforcer(cm, adapter)
-	if enfErr != nil {
-		logger.Error("casbin初始化失败", slog.Any("error", enfErr))
-		return
+	// 迁移模式：建表、可选执行 SQL，然后退出，不启动 HTTP 服务。
+	if migrateOnly || execSqlPath != "" {
+		if migrateOnly {
+			if err := dataiam.AutoMigrate(gormDB); err != nil {
+				return fmt.Errorf("数据库迁移失败: %w", err)
+			}
+			logger.Info("IAM 数据库迁移完成")
+		}
+		if execSqlPath != "" {
+			if err := db.ExecSQLFile(ctx, gormDB, execSqlPath); err != nil {
+				return fmt.Errorf("执行 SQL 文件失败: %w", err)
+			}
+			logger.Info("SQL 文件执行完成", slog.String("path", execSqlPath))
+		}
+		return nil
 	}
 
-	lumLogger, lumErr := logx.NewLumLogger(bc.Log, filepath.Join(conf.LogDir, "cron.log"))
-	if lumErr != nil {
-		logger.Error("初始化计划任务日志文件失败", slog.Any("error", lumErr))
+	var redisClient redis.UniversalClient
+	if bc.Redis != nil && bc.Redis.Enable {
+		redisClient = redis.NewClient(&redis.Options{
+			Addr:     bc.Redis.Addr,
+			Username: bc.Redis.Username,
+			Password: bc.Redis.Password,
+			DB:       bc.Redis.DB,
+		})
+		defer func() {
+			if err := redisClient.Close(); err != nil {
+				logger.Warn("关闭 Redis 客户端失败", slog.Any("error", err))
+			}
+		}()
+		pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := redisClient.Ping(pingCtx).Err(); err != nil {
+			return fmt.Errorf("redis 连接失败: %w", err)
+		}
+		logger.Info("Redis 已连接", slog.String("addr", bc.Redis.Addr))
 	}
-	defer lumLogger.Close()
+
+	cm, err := model.NewModelFromString(conf.DefaultRBACModel)
+	if err != nil {
+		return fmt.Errorf("创建 Casbin 模型失败: %w", err)
+	}
+	// No persistent adapter: IAM tables are the source of truth and
+	// ReconcileIAMPolicies rebuilds the in-memory policy at startup.
+	enforcer, err := casbin.NewSyncedEnforcer(cm)
+	if err != nil {
+		return fmt.Errorf("casbin 初始化失败: %w", err)
+	}
+
+	lumLogger, err := logx.NewLumLogger(bc.Log, filepath.Join(conf.LogDir, "cron.log"))
+	if err != nil {
+		return fmt.Errorf("初始化计划任务日志文件失败: %w", err)
+	}
+	defer func() {
+		if err := lumLogger.Close(); err != nil {
+			logger.Warn("关闭计划任务日志失败", slog.Any("error", err))
+		}
+	}()
 	cronLogger := cron.VerbosePrintfLogger(log.New(lumLogger, "cron: ", log.LstdFlags))
 	crontab := cron.New(
 		cron.WithLogger(cronLogger),
@@ -158,10 +214,25 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DisableConsoleColor()
 
-	// 创建 Gin 路由引擎
-	r := NewRouter(ctx, bc, logger, gormDB, enforcer, crontab)
+	privateKey, publicKey, keyID, err := loadJWTKeys(bc)
+	if err != nil {
+		return fmt.Errorf("jwt 密钥初始化失败: %w", err)
+	}
 
-	// 构建 HTTP 服务器结构体
+	serverOptions := []iamserver.Option{
+		iamserver.WithSigningKey(privateKey, publicKey, keyID),
+		iamserver.WithIssuer(bc.Security.Token.Issuer),
+		iamserver.WithAudience(bc.Security.Token.Audience),
+	}
+	if redisClient != nil {
+		serverOptions = append(serverOptions, iamserver.WithRedisClient(redisClient))
+	}
+
+	r, err := NewRouter(ctx, bc, logger, gormDB, enforcer, crontab, serverOptions...)
+	if err != nil {
+		return fmt.Errorf("初始化路由失败: %w", err)
+	}
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", bc.Server.Host, bc.Server.Port),
 		Handler:           r,
@@ -171,53 +242,38 @@ func main() {
 		IdleTimeout:       2 * bc.Server.Timeout.Request,
 	}
 
-	// 启动一个 goroutine 来异步启动 HTTP/HTTPS 服务
+	crtPath := filepath.Join(conf.ConfigDir, bc.Server.SSL.CrtPath)
+	keyPath := filepath.Join(conf.ConfigDir, bc.Server.SSL.KeyPath)
+	if bc.Server.SSL.Enable {
+		if _, statErr := os.Stat(crtPath); statErr != nil {
+			return fmt.Errorf("ssl 证书不可用 %s: %w", crtPath, statErr)
+		}
+		if _, statErr := os.Stat(keyPath); statErr != nil {
+			return fmt.Errorf("ssl 私钥不可用 %s: %w", keyPath, statErr)
+		}
+	}
+
+	serveErr := make(chan error, 1)
 	go func() {
-		var err error
-		// 判断是否启用 SSL/TLS 加密传输
 		if bc.Server.SSL.Enable {
-			// 构造证书和私钥的完整路径
-			crtPath := filepath.Join(conf.ConfigDir, bc.Server.SSL.CrtPath)
-			keyPath := filepath.Join(conf.ConfigDir, bc.Server.SSL.KeyPath)
-
-			// 校验证书文件是否存在
-			if _, statErr := os.Stat(crtPath); os.IsNotExist(statErr) {
-				logger.Error("SSL CRT 文件不存在", slog.String("path", crtPath))
-				panic(statErr)
-			}
-			// 校验私钥文件是否存在
-			if _, statErr := os.Stat(keyPath); os.IsNotExist(statErr) {
-				logger.Error("SSL KEY 文件不存在", slog.String("path", keyPath))
-				panic(statErr)
-			}
-
-			// 输出 HTTPS 启动信息并开始监听
-			logger.Info(
-				"正在启动 HTTPS 服务器...",
+			logger.Info("正在启动 HTTPS 服务器...",
 				slog.String("addr", srv.Addr),
 				slog.String("crt", crtPath),
 				slog.String("key", keyPath),
 			)
-			err = srv.ListenAndServeTLS(crtPath, keyPath)
-		} else {
-			// 输出 HTTP 启动信息并开始监听
-			logger.Info("正在启动 HTTP 服务器...", slog.String("addr", srv.Addr))
-			err = srv.ListenAndServe()
+			serveErr <- srv.ListenAndServeTLS(crtPath, keyPath)
+			return
 		}
-
-		// 处理服务器启动过程中的致命错误
-		if err != nil && err != http.ErrServerClosed {
-			logger.Error("服务器启动失败", slog.Any("error", err))
-			panic(err)
-		}
+		logger.Info("正在启动 HTTP 服务器...", slog.String("addr", srv.Addr))
+		serveErr <- srv.ListenAndServe()
 	}()
 
-	// 打印服务器启动信息
 	logger.Info(
 		"服务器启动ing ...",
 		slog.String("host", bc.Server.Host),
 		slog.Int("port", bc.Server.Port),
 		slog.Bool("ssl", bc.Server.SSL.Enable),
+		slog.Bool("redis", redisClient != nil),
 		slog.String("version", version),
 		slog.String("commit", commitID),
 		slog.String("build_time", buildTime),
@@ -226,61 +282,67 @@ func main() {
 	// 监听系统中断信号（SIGINT, SIGTERM）来触发优雅关闭流程
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit // 阻塞等待信号到来
+	defer signal.Stop(quit)
 
-	// 收到关闭信号后打印提示信息
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("服务器启动失败: %w", err)
+		}
+		return nil
+	case <-quit:
+	}
+
 	logger.Info("正在关闭服务器...")
 
-	// 创建带超时控制的上下文对象用于通知服务器关闭
 	timeoutCtx, cancel := context.WithTimeout(ctx, bc.Server.Timeout.Shutdown)
 	defer cancel()
 
-	// 执行服务器优雅关闭逻辑
 	if err := srv.Shutdown(timeoutCtx); err != nil {
 		logger.ErrorContext(timeoutCtx, "服务器强制关闭", slog.Any("error", err))
 	}
 
-	// 最终确认服务器已经退出
 	logger.Info("服务器已退出")
-
+	return nil
 }
 
 // newSystemConf 加载系统配置文件
 func loadConf(configPath string) (*conf.Bootstrap, error) {
-	if configPath == "" {
-		log.Fatal("配置文件路径不能为空")
+	if strings.TrimSpace(configPath) == "" {
+		return nil, fmt.Errorf("配置文件路径不能为空")
+	}
+	if info, err := os.Stat(configPath); err != nil {
+		return nil, fmt.Errorf("配置文件不可用 %s: %w", configPath, err)
+	} else if info.IsDir() {
+		return nil, fmt.Errorf("配置路径必须是文件而不是目录: %s", configPath)
 	}
 
-	// 检查配置文件是否存在
-	if _, err := os.Stat(configPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("FATAL: 配置文件不存在,请检查: %s", configPath)
-		}
-		return nil, fmt.Errorf("FATAL: 获取配置文件%s状态失败: %v", configPath, err)
-	}
-
-	// 读取配置文件
 	data, err := os.ReadFile(configPath) // #nosec G304
 	if err != nil {
-		log.Fatalf("FATAL: 读取配置文件失败: %v", err)
+		return nil, fmt.Errorf("读取配置文件失败: %w", err)
 	}
 
 	bc := &conf.Bootstrap{}
-
-	// 解析YAML配置
 	if err := yaml.Unmarshal(data, bc); err != nil {
-		return nil, fmt.Errorf("FATAL: 配置文件解析失败: %v", err)
+		return nil, fmt.Errorf("配置文件解析失败: %w", err)
 	}
 	if err := bc.Validate(); err != nil {
-		return nil, fmt.Errorf("FATAL: 配置文件校验失败: %v", err)
+		return nil, fmt.Errorf("配置文件校验失败: %w", err)
 	}
 
-	if bc.Database.Type == "sqlite" && !filepath.IsAbs(bc.Database.Dsn) {
-		bc.Database.Dsn = filepath.Join(conf.BaseDir, bc.Database.Dsn)
+	if strings.EqualFold(bc.Database.Type, "sqlite") && !filepath.IsAbs(bc.Database.Dsn) && bc.Database.Dsn != "" {
+		bc.Database.Dsn = filepath.Join(filepath.Dir(configPath), bc.Database.Dsn)
 	}
-
+	resolveKeyPath := func(material string) string {
+		trimmed := strings.TrimSpace(material)
+		if trimmed == "" || strings.Contains(trimmed, "-----BEGIN") || filepath.IsAbs(trimmed) {
+			return material
+		}
+		return filepath.Join(filepath.Dir(configPath), trimmed)
+	}
+	bc.Security.Token.PrivateKey = resolveKeyPath(bc.Security.Token.PrivateKey)
+	bc.Security.Token.PublicKey = resolveKeyPath(bc.Security.Token.PublicKey)
 	bc.SetVersion(version)
-
 	return bc, nil
 }
 
@@ -291,7 +353,8 @@ func NewRouter(
 	gormDB *gorm.DB,
 	enforcer *casbin.SyncedEnforcer,
 	crontab *cron.Cron,
-) *gin.Engine {
+	serverOptions ...iamserver.Option,
+) (*gin.Engine, error) {
 	r := gin.New()
 	if err := r.SetTrustedProxies(bc.Server.TrustedProxies); err != nil {
 		logger.Warn("配置受信任代理失败，将不信任代理转发头")
@@ -421,11 +484,61 @@ func NewRouter(
 	r.Use(middleware.TimeoutMiddleware(logger, bc.Server.Timeout.Request))
 
 	// 初始化加载业务模块
-	if _, err := iamserver.InitServer(ctx, r, bc, logger, gormDB, enforcer); err != nil {
-		logger.ErrorContext(ctx, "初始化 IAM 模块失败", slog.Any("error", err))
+	if _, err := iamserver.InitServer(ctx, r, bc, logger, gormDB, enforcer, serverOptions...); err != nil {
+		return nil, fmt.Errorf("初始化 IAM 模块失败: %w", err)
 	}
 
-	return r
+	return r, nil
+}
+
+func publicKeysEqual(a, b crypto.PublicKey) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	ap, err := cryptoutil.MarshalPublicKeyPKIXPEM(a)
+	if err != nil {
+		return false
+	}
+	bp, err := cryptoutil.MarshalPublicKeyPKIXPEM(b)
+	if err != nil {
+		return false
+	}
+	return string(ap) == string(bp)
+}
+func loadJWTKeys(bc *conf.Bootstrap) (crypto.PrivateKey, crypto.PublicKey, string, error) {
+	if bc == nil || bc.Security == nil {
+		return nil, nil, "", fmt.Errorf("security configuration is required")
+	}
+	material := strings.TrimSpace(bc.Security.Token.PrivateKey)
+	if material == "" {
+		return nil, nil, "", fmt.Errorf("security.token.private_key is required")
+	}
+	privateKey, err := cryptoutil.LoadPrivateKey(material)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("load JWT private key: %w", err)
+	}
+	publicKey, err := cryptoutil.ExtractPublicKey(privateKey)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("derive JWT public key: %w", err)
+	}
+	if configured := strings.TrimSpace(bc.Security.Token.PublicKey); configured != "" {
+		configuredKey, err := cryptoutil.LoadPublicKey(configured)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("load JWT public key: %w", err)
+		}
+		if !publicKeysEqual(publicKey, configuredKey) {
+			return nil, nil, "", fmt.Errorf("configured JWT public key does not match private key")
+		}
+		publicKey = configuredKey
+	}
+	kid := bc.Security.Token.KeyID
+	if strings.TrimSpace(kid) == "" {
+		kid, err = auth.KeyID(publicKey)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("derive JWT key ID: %w", err)
+		}
+	}
+	return privateKey, publicKey, kid, nil
 }
 
 func diagnosticsAuth(expected string) gin.HandlerFunc {

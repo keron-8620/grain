@@ -515,3 +515,24 @@ func (r *userRepo) ConsumeRefreshToken(ctx context.Context, jti string, ttl time
 	}
 	return ok, err
 }
+
+func (r *userRepo) GetLoginFailure(ctx context.Context, username string) (int64, error) {
+	if r.cache == nil || username == "" {
+		return 0, nil
+	}
+	return r.cache.GetLoginFailure(ctx, username)
+}
+
+func (r *userRepo) IncrementLoginFailure(ctx context.Context, username string, ttl time.Duration) (int64, error) {
+	if r.cache == nil || username == "" {
+		return 0, nil
+	}
+	return r.cache.IncrementLoginFailure(ctx, username, ttl)
+}
+
+func (r *userRepo) ClearLoginFailures(ctx context.Context, username string) error {
+	if r.cache == nil || username == "" {
+		return nil
+	}
+	return r.cache.DeleteLoginFailure(ctx, username)
+}

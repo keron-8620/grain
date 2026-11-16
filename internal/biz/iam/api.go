@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -189,15 +190,17 @@ func (uc *ApiUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeRecordNotFound.Error("API不存在")
 	}
 
-	if err := uc.repo.Delete(ctx, id); err != nil {
-		return errorx.FromDBError(err)
-	}
-
 	cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if err := uc.repo.RemovePolicy(cleanCtx, api, true); err != nil {
-		uc.logger.ErrorContext(ctx, "failed to remove casbin policy for api", slog.Uint64("api_id", id), slog.Any("error", err))
+	if err := uc.repo.RemovePolicy(cleanCtx, api, false); err != nil {
 		return errorx.Wrap(err, errorx.CodeSystemError, "删除API权限策略失败")
+	}
+	if err := uc.repo.Delete(ctx, id); err != nil {
+		restoreErr := uc.repo.AddPolicy(cleanCtx, api)
+		return errorx.Wrap(errors.Join(errorx.FromDBError(err), restoreErr), errorx.CodeSystemError, "删除API失败")
+	}
+	if err := uc.repo.RemovePolicy(cleanCtx, api, true); err != nil {
+		return errorx.Wrap(err, errorx.CodeSystemError, "清理API关联权限策略失败")
 	}
 
 	return nil
@@ -258,21 +261,15 @@ func (uc *ApiUseCase) SyncRoutes(ctx context.Context, routes []ApiRoute) (int, e
 	if err != nil {
 		return 0, errorx.FromDBError(err)
 	}
-	if count == 0 {
-		return 0, nil
-	}
-
-	// Query created/existing APIs for the synced routes in a single batch query
+	// Query all matching APIs even when no new catalog rows were inserted; startup
+	// reconciliation must also repair an already-populated catalog.
 	apis, err := uc.repo.FindByRoutes(ctx, routes)
 	if err != nil {
-		uc.logger.WarnContext(ctx, "failed to query APIs for synced routes", slog.Any("error", err))
-		return count, nil
+		return count, errorx.FromDBError(err)
 	}
-
-	// Ensure authorization policy rules exist in Casbin for newly synced routes in a single batch
 	if len(apis) > 0 {
 		if polErr := uc.repo.AddPolicies(ctx, apis); polErr != nil {
-			uc.logger.WarnContext(ctx, "failed to add batch casbin policies for synced routes", slog.Int("api_count", len(apis)), slog.Any("error", polErr))
+			return count, errorx.Wrap(polErr, errorx.CodeSystemError, "同步API权限策略失败")
 		}
 	}
 

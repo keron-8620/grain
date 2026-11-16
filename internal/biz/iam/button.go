@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -180,21 +181,31 @@ func (uc *ButtonUseCase) Update(ctx context.Context, button *Button) (*Button, e
 		return nil, errorx.FromDBError(err)
 	}
 
-	rollback := func() {
+	rollback := func() error {
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
+		var errs []error
 		if _, err := uc.repo.Update(rbCtx, oldBtn); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to roll back button model update", slog.Uint64("button_id", button.ID), slog.Any("error", err))
+			errs = append(errs, err)
 		}
-		_ = uc.repo.RemoveGroupPolicy(rbCtx, updated, false)
-		_ = uc.repo.AddGroupPolicy(rbCtx, oldBtn)
+		if err := uc.repo.RemoveGroupPolicy(rbCtx, updated, false); err != nil {
+			uc.logger.ErrorContext(ctx, "failed to clean up updated button policy", slog.Uint64("button_id", button.ID), slog.Any("error", err))
+			errs = append(errs, err)
+		}
+		if err := uc.repo.AddGroupPolicy(rbCtx, oldBtn); err != nil {
+			uc.logger.ErrorContext(ctx, "failed to restore button policy", slog.Uint64("button_id", button.ID), slog.Any("error", err))
+			errs = append(errs, err)
+		}
+		return errors.Join(errs...)
 	}
 
-	_ = uc.repo.RemoveGroupPolicy(ctx, oldBtn, false)
+	if err := uc.repo.RemoveGroupPolicy(ctx, oldBtn, false); err != nil {
+		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "删除旧按钮权限策略失败")
+	}
 	if err := uc.repo.AddGroupPolicy(ctx, updated); err != nil {
 		uc.logger.ErrorContext(ctx, "failed to update casbin group policy for button", slog.Uint64("button_id", button.ID), slog.Any("error", err))
-		rollback()
-		return nil, errorx.Wrap(err, errorx.CodeSystemError, "更新按钮权限策略失败")
+		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "更新按钮权限策略失败")
 	}
 
 	return updated, nil
@@ -206,7 +217,7 @@ func (uc *ButtonUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeInvalidParam.Error("无效的按钮ID")
 	}
 
-	btn, err := uc.repo.FindByID(ctx, id)
+	btn, err := uc.repo.FindByID(ctx, id, "Apis")
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
@@ -214,15 +225,17 @@ func (uc *ButtonUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeRecordNotFound.Error("按钮不存在")
 	}
 
-	if err := uc.repo.Delete(ctx, id); err != nil {
-		return errorx.FromDBError(err)
-	}
-
 	cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if err := uc.repo.RemoveGroupPolicy(cleanCtx, btn, true); err != nil {
-		uc.logger.ErrorContext(ctx, "failed to remove casbin group policy for button", slog.Uint64("button_id", id), slog.Any("error", err))
+	if err := uc.repo.RemoveGroupPolicy(cleanCtx, btn, false); err != nil {
 		return errorx.Wrap(err, errorx.CodeSystemError, "删除按钮权限策略失败")
+	}
+	if err := uc.repo.Delete(ctx, id); err != nil {
+		restoreErr := uc.repo.AddGroupPolicy(cleanCtx, btn)
+		return errorx.Wrap(errors.Join(errorx.FromDBError(err), restoreErr), errorx.CodeSystemError, "删除按钮失败")
+	}
+	if err := uc.repo.RemoveGroupPolicy(cleanCtx, btn, true); err != nil {
+		return errorx.Wrap(err, errorx.CodeSystemError, "清理按钮关联权限策略失败")
 	}
 
 	return nil

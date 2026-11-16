@@ -299,13 +299,22 @@ func (m *defaultTokenManager) RotateTokenPair(ctx context.Context, user *User, o
 	}, refreshClaims, nil
 }
 
+// AuthUseCaseConfig carries refresh/session and login-lockout settings.
+type AuthUseCaseConfig struct {
+	RefreshTTL        time.Duration
+	MaxFailedAttempts int
+	LockDuration      time.Duration
+}
+
 // AuthUseCase handles user authentication, refresh token family rotation, and session management.
 type AuthUseCase struct {
-	userRepo UserRepo
-	roleRepo RoleRepo
-	tokenMgr TokenManager
-	logger   *slog.Logger
-	ttl      time.Duration
+	userRepo          UserRepo
+	roleRepo          RoleRepo
+	tokenMgr          TokenManager
+	logger            *slog.Logger
+	ttl               time.Duration
+	maxFailedAttempts int
+	lockDuration      time.Duration
 }
 
 // NewAuthUseCase creates a new AuthUseCase instance.
@@ -332,6 +341,23 @@ func NewAuthUseCase(
 	}
 }
 
+// NewAuthUseCaseWithConfig builds an AuthUseCase with login lockout settings.
+func NewAuthUseCaseWithConfig(
+	userRepo UserRepo,
+	roleRepo RoleRepo,
+	tokenMgr TokenManager,
+	logger *slog.Logger,
+	cfg AuthUseCaseConfig,
+) *AuthUseCase {
+	uc := NewAuthUseCase(userRepo, roleRepo, tokenMgr, logger, cfg.RefreshTTL)
+	uc.maxFailedAttempts = cfg.MaxFailedAttempts
+	uc.lockDuration = cfg.LockDuration
+	if uc.maxFailedAttempts > 0 && uc.lockDuration <= 0 {
+		uc.lockDuration = 15 * time.Minute
+	}
+	return uc
+}
+
 // TokenManager returns the TokenManager instance.
 func (uc *AuthUseCase) TokenManager() TokenManager {
 	return uc.tokenMgr
@@ -344,15 +370,19 @@ func (uc *AuthUseCase) Login(ctx context.Context, username, password string) (*L
 		return nil, errorx.CodeMissingParam.Error("用户名和密码不能为空")
 	}
 
+	if err := uc.checkLoginLock(ctx, cleanUsername); err != nil {
+		return nil, err
+	}
+
 	user, err := uc.userRepo.FindByUsername(ctx, cleanUsername, "Role")
 	if err != nil {
 		if errorx.IsRecordNotFound(err) {
-			return nil, errorx.CodeAuthFailed.Error("用户名或密码错误")
+			return nil, uc.recordLoginFailure(ctx, cleanUsername)
 		}
 		return nil, errorx.FromDBError(err)
 	}
 	if user == nil {
-		return nil, errorx.CodeAuthFailed.Error("用户名或密码错误")
+		return nil, uc.recordLoginFailure(ctx, cleanUsername)
 	}
 
 	if !user.IsActive {
@@ -362,7 +392,13 @@ func (uc *AuthUseCase) Login(ctx context.Context, username, password string) (*L
 	hasher := cryptoutil.NewBcryptHasher(0)
 	valid, err := hasher.VerifyString(password, user.Password)
 	if err != nil || !valid {
-		return nil, errorx.CodeAuthFailed.Error("用户名或密码错误")
+		return nil, uc.recordLoginFailure(ctx, cleanUsername)
+	}
+
+	if uc.maxFailedAttempts > 0 {
+		if clearErr := uc.userRepo.ClearLoginFailures(ctx, cleanUsername); clearErr != nil {
+			uc.logger.WarnContext(ctx, "failed to clear login failure counter", slog.String("username", cleanUsername), slog.Any("error", clearErr))
+		}
 	}
 
 	version, err := uc.userRepo.GetTokenVersion(ctx, user.ID)
@@ -380,6 +416,47 @@ func (uc *AuthUseCase) Login(ctx context.Context, username, password string) (*L
 		User:      user.Sanitize(),
 		TokenPair: tokens,
 	}, nil
+}
+
+// checkLoginLock rejects a login attempt while the account is locked. The
+// counter is checked before user lookup so response behaviour does not reveal
+// whether a username exists.
+func (uc *AuthUseCase) checkLoginLock(ctx context.Context, username string) error {
+	if uc.maxFailedAttempts <= 0 {
+		return nil
+	}
+	failures, err := uc.userRepo.GetLoginFailure(ctx, username)
+	if err != nil {
+		uc.logger.ErrorContext(ctx, "failed to read login failure counter", slog.String("username", username), slog.Any("error", err))
+		return errorx.Wrap(err, errorx.CodeCacheError, "登录安全状态不可用")
+	}
+	if failures >= int64(uc.maxFailedAttempts) {
+		return errorx.CodeAccountLocked.Error("登录失败次数过多，账号已临时锁定，请稍后再试")
+	}
+	return nil
+}
+
+// recordLoginFailure increments the failure counter and returns the appropriate
+// authentication error. Reaching the threshold locks the account until the
+// counter TTL expires.
+func (uc *AuthUseCase) recordLoginFailure(ctx context.Context, username string) error {
+	if uc.maxFailedAttempts <= 0 {
+		return errorx.CodeAuthFailed.Error("用户名或密码错误")
+	}
+	failures, err := uc.userRepo.IncrementLoginFailure(ctx, username, uc.lockDuration)
+	if err != nil {
+		uc.logger.ErrorContext(ctx, "failed to record login failure", slog.String("username", username), slog.Any("error", err))
+		return errorx.Wrap(err, errorx.CodeCacheError, "登录安全状态不可用")
+	}
+	if failures >= int64(uc.maxFailedAttempts) {
+		uc.logger.WarnContext(ctx, "account locked after repeated login failures",
+			slog.String("username", username),
+			slog.Int64("failed_attempts", failures),
+			slog.Duration("lock_duration", uc.lockDuration),
+		)
+		return errorx.CodeAccountLocked.Error("登录失败次数过多，账号已临时锁定，请稍后再试")
+	}
+	return errorx.CodeAuthFailed.Error("用户名或密码错误")
 }
 
 // RefreshToken performs refresh token rotation (RTR) with family reuse detection.

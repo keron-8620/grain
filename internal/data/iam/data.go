@@ -1,6 +1,8 @@
 package iam
 
 import (
+	"sync"
+
 	"github.com/casbin/casbin/v3"
 	"gorm.io/gorm"
 
@@ -13,6 +15,7 @@ type Data struct {
 	gormdb    *gorm.DB
 	userCache UserCache
 	enforcer  *casbin.SyncedEnforcer
+	policyMu  sync.Mutex
 	dbTimeout db.DBTimeout
 	dbSlow    db.DBSlowThreshold
 	jwtConf   auth.JWTConfig
@@ -26,6 +29,11 @@ func NewData(
 	dbSlow db.DBSlowThreshold,
 	jwtConf auth.JWTConfig,
 ) *Data {
+	if enforcer != nil {
+		// IAM relations are the durable policy source. The string adapter is only
+		// an enforcer bootstrap artifact and must not receive runtime mutations.
+		enforcer.EnableAutoSave(false)
+	}
 	return &Data{
 		gormdb:    gormdb,
 		userCache: userCache,

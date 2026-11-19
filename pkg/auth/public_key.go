@@ -17,9 +17,10 @@ import (
 	"math/big"
 	"strings"
 
+	"grain/pkg/cryptoutil"
+
 	"emperror.dev/errors"
 	"github.com/golang-jwt/jwt/v5"
-	"grain/pkg/cryptoutil"
 )
 
 // KeyID derives a stable, non-secret identifier for a public key: the first 16 hex characters of the
@@ -104,7 +105,7 @@ func PublicKeyToJWK(pub crypto.PublicKey, kid, alg string) (*JSONWebKey, error) 
 		}, nil
 
 	case *ecdsa.PublicKey:
-		if k == nil || k.Curve == nil || k.Curve.Params() == nil {
+		if k == nil || k.Curve == nil || k.Params() == nil {
 			return nil, errors.New("invalid ecdsa public key")
 		}
 		raw, err := k.Bytes()
@@ -521,7 +522,7 @@ func AlgorithmForPublicKey(pub crypto.PublicKey) string {
 	case *rsa.PublicKey:
 		return "RS256"
 	case *ecdsa.PublicKey:
-		if k == nil || k.Curve == nil || k.Curve.Params() == nil {
+		if k == nil || k.Curve == nil || k.Params() == nil {
 			return ""
 		}
 		switch k.Curve.Params().Name {

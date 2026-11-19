@@ -2,7 +2,9 @@ package cryptoutil
 
 import (
 	"crypto/rand"
+	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"emperror.dev/errors"
@@ -142,6 +144,9 @@ func (km *KeyManager) DeriveKeyArgon2idFromBytes(password, salt []byte) ([]byte,
 		return nil, errors.Errorf("salt length %d exceeds maximum allowable %d bytes", len(salt), MaxArgon2MaterialLen)
 	}
 
+	if km.keyLen < 0 || km.keyLen > math.MaxUint32 {
+		return nil, fmt.Errorf("keyLen overflow uint32")
+	}
 	key := argon2.IDKey(password, salt, km.argon2Time, km.argon2Memory, km.argon2Threads, uint32(km.keyLen))
 	return key, nil
 }

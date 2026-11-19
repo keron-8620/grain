@@ -51,6 +51,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"math"
 	"strings"
 
 	"emperror.dev/errors"
@@ -273,7 +274,11 @@ func pkcs7Padding(data []byte, blockSize int) ([]byte, error) {
 	if blockSize <= 0 || blockSize > 255 {
 		return nil, errors.Errorf("invalid block size: %d", blockSize)
 	}
+
 	padding := blockSize - (len(data) % blockSize)
+	if padding < 0 || padding > math.MaxUint8 {
+		return nil, errors.New("invalid padding length")
+	}
 	padText := bytes.Repeat([]byte{byte(padding)}, padding)
 	return append(data, padText...), nil
 }
@@ -302,7 +307,11 @@ func pkcs7Unpadding(data []byte, blockSize int) ([]byte, error) {
 		// b is the distance from the end: 0 is the last byte, blockSize-1 is the first byte of the block
 		isPad := subtle.ConstantTimeLessOrEq(b+1, padLen)
 		byteVal := lastBlock[blockSize-1-b]
+		if padLen < 0 || padLen > math.MaxUint8 {
+			return nil, errors.New("invalid padLen")
+		}
 		byteEq := subtle.ConstantTimeByteEq(byteVal, byte(padLen))
+
 		good &= subtle.ConstantTimeSelect(isPad, byteEq, 1)
 	}
 

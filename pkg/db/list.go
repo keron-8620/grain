@@ -96,6 +96,24 @@ type ListFilterField = filter.ListFilterField
 // ListFilter is a single, already type-checked filter comparison.
 type ListFilter = filter.ListFilter
 
+// ListOptions is the shared pagination, filtering, and ordering input for repository
+// list queries. Storage-layer details such as preloads and column allowlists stay in
+// QueryParams and must not leak into the biz-layer contract.
+type ListOptions struct {
+	Offset   int
+	PageSize int
+	Filters  []ListFilter
+	OrderBy  string
+}
+
+// Normalize applies the default page size and validates the pagination bounds.
+func (o *ListOptions) Normalize() error {
+	if o.PageSize <= 0 {
+		o.PageSize = DefaultPageSize
+	}
+	return ValidateListOptions(o.Offset, o.PageSize)
+}
+
 // ValidateListFilters re-validates parsed filters against the resource declarations
 // (defense in depth: the storage layer must never receive an undeclared field or operator).
 var ValidateListFilters = filter.ValidateListFilters

@@ -9,6 +9,7 @@ var (
 	msgMu               sync.RWMutex
 	customErrorMessages = make(map[BizCode]string)
 
+	// #nosec G101 -- builtin error message map, not credentials
 	builtinErrorMessages = map[BizCode]string{
 		CodeOK: "ok",
 
@@ -94,9 +95,6 @@ var (
 		CodeInvalidValueOfLength:    "关联值无效, 长度不匹配",
 		CodePreloadNotAllowed:       "使用计数时不允许预加载",
 	}
-
-	// defaultErrorMessages 保留用于向后兼容
-	defaultErrorMessages = builtinErrorMessages
 )
 
 // RegisterErrorMessage 注册或覆盖单个错误码的默认提示信息（并发安全）。

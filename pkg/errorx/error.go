@@ -204,27 +204,27 @@ func (e *Error) Format(s fmt.State, verb rune) {
 	switch verb {
 	case 'v':
 		if s.Flag('+') {
-			fmt.Fprintf(s, "error: code = %d msg = %s\n", e.Code, e.Msg)
+			_, _ = fmt.Fprintf(s, "error: code = %d msg = %s\n", e.Code, e.Msg)
 			if len(e.Details) > 0 {
-				fmt.Fprintf(s, "details: %v\n", e.Details)
+				_, _ = fmt.Fprintf(s, "details: %v\n", e.Details)
 			}
 			if len(e.metadata) > 0 {
-				fmt.Fprintf(s, "metadata: %v\n", e.metadata)
+				_, _ = fmt.Fprintf(s, "metadata: %v\n", e.metadata)
 			}
 			if e.cause != nil {
-				fmt.Fprintf(s, "%+v", e.cause)
+				_, _ = fmt.Fprintf(s, "%+v", e.cause)
 			} else if e.stack != nil {
-				fmt.Fprintf(s, "%+v", e.stack)
+				_, _ = fmt.Fprintf(s, "%+v", e.stack)
 			}
 			return
 		}
 		fallthrough
 	case 's':
-		fmt.Fprintf(s, "%s", e.Error())
+		_, _ = fmt.Fprintf(s, "%s", e.Error())
 	case 'q':
-		fmt.Fprintf(s, "%q", e.Error())
+		_, _ = fmt.Fprintf(s, "%q", e.Error())
 	default:
-		fmt.Fprintf(s, "%%!%c(errorx.Error=%s)", verb, e.Error())
+		_, _ = fmt.Fprintf(s, "%%!%c(errorx.Error=%s)", verb, e.Error())
 	}
 
 }

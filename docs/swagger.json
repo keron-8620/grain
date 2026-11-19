@@ -1,8 +1,8 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "artweb 自动化运维平台 IAM 模块 API 接口文档",
-        "title": "artweb API",
+        "description": "grain 自动化平台 API 接口文档",
+        "title": "grain API",
         "contact": {},
         "version": "1.0"
     },
@@ -2409,7 +2409,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "根据主键彻底删除系统用户账号",
+                "description": "根据主键软删除系统用户账号，已删除用户的用户名不可复用",
                 "produces": [
                     "application/json"
                 ],

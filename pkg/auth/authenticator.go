@@ -518,12 +518,6 @@ func shouldTriggerKeyRefresh(err error, token *jwt.Token, keys *VerificationKeys
 	return true
 }
 
-// isUnknownKeyOrSignatureFailure reports whether err indicates an unknown key id or invalid signature.
-// Deprecated: use shouldTriggerKeyRefresh for finer-grained key rotation detection.
-func isUnknownKeyOrSignatureFailure(err error) bool {
-	return shouldTriggerKeyRefresh(err, nil, nil)
-}
-
 // VerifyTokenVersion checks the user's real-time token_version against the configured TokenVersionStore
 // to prevent the use of revoked tokens.
 // It is fail-closed: when the store is not configured, unreachable, or the version key is missing

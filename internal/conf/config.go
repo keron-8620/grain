@@ -36,10 +36,34 @@ type Bootstrap struct {
 	Server   *ServerConfig   `yaml:"server"`
 	Database *db.DBConf      `yaml:"database"`
 	Redis    *RedisConfig    `yaml:"redis"`
-	CORS     *AllowConfig    `yaml:"cors"`
 	Log      *logx.Options   `yaml:"log"`
 	Security *SecurityConfig `yaml:"security"`
+	IAM      *IAMConfig      `yaml:"iam"`
+	Job      *JobConfig      `yaml:"job"`
 	version  string
+}
+
+// JobConfig 定时任务模块配置
+type JobConfig struct {
+	ScriptRepo *ScriptRepoConfig `yaml:"script_repo"`
+}
+
+// ScriptRepoConfig 脚本内容所在的 Git 仓库配置。
+// 脚本正文不写入数据库，统一提交到该仓库；数据库只保存元数据。
+type ScriptRepoConfig struct {
+	Enable           bool          `yaml:"enable"`
+	URL              string        `yaml:"url"`
+	Branch           string        `yaml:"branch"`
+	Dir              string        `yaml:"dir"`
+	Timeout          time.Duration `yaml:"timeout"`
+	AuthorName       string        `yaml:"author_name"`
+	AuthorEmail      string        `yaml:"author_email"`
+	AuthType         string        `yaml:"auth_type"` // none / http / ssh
+	Username         string        `yaml:"username"`
+	Password         string        `yaml:"password"`
+	SSHKeyPath       string        `yaml:"ssh_key_path"`
+	SSHKeyPassphrase string        `yaml:"ssh_key_passphrase"`
+	InsecureSkipTLS  bool          `yaml:"insecure_skip_tls"`
 }
 
 // RedisConfig configures shared session and revocation state.
@@ -95,15 +119,38 @@ func (b *Bootstrap) Validate() error {
 	if b.Redis != nil && b.Redis.Enable && strings.TrimSpace(b.Redis.Addr) == "" {
 		return fmt.Errorf("redis.addr is required when redis.enable is true")
 	}
+	if b.Job != nil && b.Job.ScriptRepo != nil && b.Job.ScriptRepo.Enable {
+		sr := b.Job.ScriptRepo
+		if strings.TrimSpace(sr.URL) == "" {
+			return fmt.Errorf("job.script_repo.url is required when job.script_repo.enable is true")
+		}
+		if strings.TrimSpace(sr.Dir) == "" {
+			return fmt.Errorf("job.script_repo.dir is required when job.script_repo.enable is true")
+		}
+		switch strings.ToLower(strings.TrimSpace(sr.AuthType)) {
+		case "", "none", "http", "ssh":
+		default:
+			return fmt.Errorf("job.script_repo.auth_type must be one of none, http, ssh")
+		}
+		if sr.Timeout < 0 {
+			return fmt.Errorf("job.script_repo.timeout cannot be negative")
+		}
+	}
 	if b.Security == nil {
 		b.Security = &SecurityConfig{}
 	}
-	accessMethod, err := SigningMethod(b.Security.Token.AccessMethod)
+	if b.Security.CORS == nil {
+		b.Security.CORS = &AllowConfig{}
+	}
+	if b.IAM == nil {
+		b.IAM = &IAMConfig{}
+	}
+	accessMethod, err := SigningMethod(b.IAM.Token.AccessMethod)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(b.Security.Token.RefreshMethod) != "" {
-		refreshMethod, err := SigningMethod(b.Security.Token.RefreshMethod)
+	if strings.TrimSpace(b.IAM.Token.RefreshMethod) != "" {
+		refreshMethod, err := SigningMethod(b.IAM.Token.RefreshMethod)
 		if err != nil {
 			return err
 		}
@@ -111,24 +158,22 @@ func (b *Bootstrap) Validate() error {
 			return fmt.Errorf("security.token.refresh_method must match access_method %q", accessMethod.Alg())
 		}
 	}
-	if strings.TrimSpace(b.Security.Token.PrivateKey) == "" {
+	if strings.TrimSpace(b.IAM.Token.PrivateKey) == "" {
 		return fmt.Errorf("security.token.private_key is required")
 	}
-	if b.Security.Login.MaxFailedAttempts < 0 {
+	if b.IAM.Login.MaxFailedAttempts < 0 {
 		return fmt.Errorf("security.login.max_failed_attempts cannot be negative")
 	}
-	if b.Security.Login.LockDuration < 0 {
+	if b.IAM.Login.LockDuration < 0 {
 		return fmt.Errorf("security.login.lock_duration cannot be negative")
 	}
-	if b.Security.Login.MaxFailedAttempts > 0 && b.Security.Login.LockDuration <= 0 {
+	if b.IAM.Login.MaxFailedAttempts > 0 && b.IAM.Login.LockDuration <= 0 {
 		return fmt.Errorf("security.login.lock_duration is required when max_failed_attempts is enabled")
 	}
-	if b.Security.Password.StrengthLevel < 0 || b.Security.Password.StrengthLevel > 3 {
+	if b.IAM.Password.StrengthLevel < 0 || b.IAM.Password.StrengthLevel > 3 {
 		return fmt.Errorf("security.password.strength_level must be between 0 and 3")
 	}
-	if b.CORS == nil {
-		b.CORS = &AllowConfig{}
-	}
+
 	if b.Log == nil {
 		b.Log = &logx.Options{}
 	}
@@ -218,9 +263,14 @@ type PasswordConfig struct {
 
 // SecurityConfig 安全配置
 type SecurityConfig struct {
-	HostGuard HostGuardConfig     `yaml:"host_guard"` // host请求头配置
-	Timestamp TimestampConfig     `yaml:"timestamp"`  // 时间戳验证配置
-	Token     TokenConfig         `yaml:"token"`      // Token配置
-	Login     LoginSecurityConfig `yaml:"login"`      // 登录安全配置
-	Password  PasswordConfig      `yaml:"password"`   // 密码配置
+	CORS      *AllowConfig    `yaml:"cors"`       // cors 配置
+	HostGuard HostGuardConfig `yaml:"host_guard"` // host请求头配置
+	Timestamp TimestampConfig `yaml:"timestamp"`  // 时间戳验证配置
+
+}
+
+type IAMConfig struct {
+	Token    TokenConfig         `yaml:"token"`    // Token配置
+	Login    LoginSecurityConfig `yaml:"login"`    // 登录安全配置
+	Password PasswordConfig      `yaml:"password"` // 密码配置
 }

@@ -8,8 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"grain/pkg/cryptoutil"
+	"grain/pkg/db"
 	"grain/pkg/errorx"
 )
+
+func boolPtr(v bool) *bool {
+	return &v
+}
 
 func TestUserUseCase_Create(t *testing.T) {
 	ctx := context.Background()
@@ -95,11 +100,10 @@ func TestUserUseCase_Update(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("update name and role revokes token", func(t *testing.T) {
-		updated, err := uc.Update(ctx, &User{
+		updated, err := uc.Update(ctx, UserUpdate{
 			ID:       user.ID,
 			Username: "bob_renamed",
 			RoleID:   r2.ID,
-			IsActive: true,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, "bob_renamed", updated.Username)
@@ -115,8 +119,8 @@ func TestUserUseCase_Update(t *testing.T) {
 		}, "password123")
 		require.NoError(t, err)
 
-		// Only provide ID and Username, leaving IsActive as zero-value (false) and RoleID as 0
-		updated, err := uc.Update(ctx, &User{
+		// Only provide ID and Username, leaving IsActive nil (unchanged) and RoleID as 0
+		updated, err := uc.Update(ctx, UserUpdate{
 			ID:       activeUser.ID,
 			Username: "david_renamed",
 		})
@@ -128,10 +132,9 @@ func TestUserUseCase_Update(t *testing.T) {
 	})
 
 	t.Run("disable user revokes token", func(t *testing.T) {
-		updated, err := uc.Update(ctx, &User{
-			ID:          user.ID,
-			IsActive:    false,
-			IsActiveSet: true,
+		updated, err := uc.Update(ctx, UserUpdate{
+			ID:       user.ID,
+			IsActive: boolPtr(false),
 		})
 		require.NoError(t, err)
 		assert.False(t, updated.IsActive)
@@ -146,7 +149,7 @@ func TestUserUseCase_Update(t *testing.T) {
 		}, "password123")
 		require.NoError(t, err)
 
-		updated, err := uc.Update(ctx, &User{
+		updated, err := uc.Update(ctx, UserUpdate{
 			ID:       activeUser.ID,
 			Password: "newpassword123",
 		})
@@ -162,7 +165,7 @@ func TestUserUseCase_Update(t *testing.T) {
 	})
 
 	t.Run("short password update is rejected", func(t *testing.T) {
-		_, err := uc.Update(ctx, &User{
+		_, err := uc.Update(ctx, UserUpdate{
 			ID:       user.ID,
 			Password: "123",
 		})
@@ -212,7 +215,7 @@ func TestUserUseCase_PasswordPolicy(t *testing.T) {
 		})
 
 		t.Run("admin update enforces policy", func(t *testing.T) {
-			_, err := uc.Update(ctx, &User{ID: created.ID, Password: "short"})
+			_, err := uc.Update(ctx, UserUpdate{ID: created.ID, Password: "short"})
 			require.Error(t, err)
 			assert.True(t, errorx.IsCode(err, errorx.CodePasswordStrengthFailed))
 		})
@@ -336,7 +339,7 @@ func TestUserUseCase_GetListAndDelete(t *testing.T) {
 	})
 
 	t.Run("list", func(t *testing.T) {
-		list, total, err := uc.List(ctx, UserListOptions{})
+		list, total, err := uc.List(ctx, db.ListOptions{})
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), total)
 		assert.Len(t, list, 1)
@@ -354,9 +357,15 @@ func TestUserUseCase_GetListAndDelete(t *testing.T) {
 
 		err = uc.Delete(ctx, user.ID)
 		require.NoError(t, err)
+		assert.Equal(t, 1, userRepo.incrementVersionCalled[user.ID])
 
 		_, err = uc.Get(ctx, user.ID)
 		require.Error(t, err)
 		assert.True(t, errorx.IsCode(err, errorx.CodeRecordNotFound))
+
+		// Deleted usernames stay reserved and cannot be reused.
+		_, err = uc.Create(ctx, &User{Username: "helen", RoleID: r.ID, IsActive: true}, "password123")
+		require.Error(t, err)
+		assert.True(t, errorx.IsCode(err, errorx.CodeDuplicatedKey))
 	})
 }

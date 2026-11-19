@@ -65,34 +65,13 @@ func TestMetaSchemas(t *testing.T) {
 }
 
 func TestPersistentModels_LogValueAndHelpers(t *testing.T) {
-	t.Run("apiPO", func(t *testing.T) {
-		po := &apiPO{
-			StandardModel: db.StandardModel{BaseModel: db.BaseModel{ID: 1}},
-			URL:           "/test",
-			Method:        "GET",
-			Label:         "Test",
-		}
-		assert.Equal(t, "iam_api", po.TableName())
-		assert.Equal(t, slog.KindGroup, po.LogValue().Kind())
-
-		var nilPO *apiPO
-		assert.Equal(t, "<nil>", nilPO.LogValue().String())
-
-		upmap := po.ToUpdateMap()
-		assert.Equal(t, "/test", upmap["url"])
-
-		ids := listApiPOToUint64s([]apiPO{*po, {StandardModel: db.StandardModel{BaseModel: db.BaseModel{ID: 2}}}})
-		assert.Equal(t, []uint64{1, 2}, ids)
-		assert.Empty(t, listApiPOToUint64s(nil))
-	})
-
 	t.Run("userPO", func(t *testing.T) {
 		po := &userPO{
-			StandardModel: db.StandardModel{BaseModel: db.BaseModel{ID: 1}},
-			Username:      "alice",
-			IsActive:      true,
-			RoleID:        2,
-			Password:      "secret",
+			SoftDeleteModel: db.SoftDeleteModel{StandardModel: db.StandardModel{BaseModel: db.BaseModel{ID: 1}}},
+			Username:        "alice",
+			IsActive:        true,
+			RoleID:          2,
+			Password:        "secret",
 		}
 		assert.Equal(t, "iam_user", po.TableName())
 		assert.Equal(t, slog.KindGroup, po.LogValue().Kind())

@@ -35,6 +35,7 @@ import (
 	"grain/docs"
 	"grain/internal/conf"
 	dataiam "grain/internal/data/iam"
+	datajob "grain/internal/data/job"
 	"grain/internal/middleware"
 	iamserver "grain/internal/server/iam"
 	"grain/pkg/auth"
@@ -64,9 +65,9 @@ func init() {
 	flag.StringVar(&execSqlPath, "exec-sql", "", "execute an SQL file and exit")
 }
 
-// @title artweb API
+// @title grain API
 // @version 1.0
-// @description artweb 自动化运维平台 IAM 模块 API 接口文档
+// @description grain 运营管控平台 API 接口文档
 // @BasePath /
 
 // @securityDefinitions.apikey BearerAuth
@@ -148,9 +149,12 @@ func run() error {
 	if migrateOnly || execSqlPath != "" {
 		if migrateOnly {
 			if err := dataiam.AutoMigrate(gormDB); err != nil {
-				return fmt.Errorf("数据库迁移失败: %w", err)
+				return fmt.Errorf("iam 数据库迁移失败: %w", err)
 			}
-			logger.Info("IAM 数据库迁移完成")
+			if err := datajob.AutoMigrate(gormDB); err != nil {
+				return fmt.Errorf("job 数据库迁移失败: %w", err)
+			}
+			logger.Info("数据库迁移完成")
 		}
 		if execSqlPath != "" {
 			if err := db.ExecSQLFile(ctx, gormDB, execSqlPath); err != nil {
@@ -221,8 +225,8 @@ func run() error {
 
 	serverOptions := []iamserver.Option{
 		iamserver.WithSigningKey(privateKey, publicKey, keyID),
-		iamserver.WithIssuer(bc.Security.Token.Issuer),
-		iamserver.WithAudience(bc.Security.Token.Audience),
+		iamserver.WithIssuer(bc.IAM.Token.Issuer),
+		iamserver.WithAudience(bc.IAM.Token.Audience),
 	}
 	if redisClient != nil {
 		serverOptions = append(serverOptions, iamserver.WithRedisClient(redisClient))
@@ -340,8 +344,8 @@ func loadConf(configPath string) (*conf.Bootstrap, error) {
 		}
 		return filepath.Join(filepath.Dir(configPath), trimmed)
 	}
-	bc.Security.Token.PrivateKey = resolveKeyPath(bc.Security.Token.PrivateKey)
-	bc.Security.Token.PublicKey = resolveKeyPath(bc.Security.Token.PublicKey)
+	bc.IAM.Token.PrivateKey = resolveKeyPath(bc.IAM.Token.PrivateKey)
+	bc.IAM.Token.PublicKey = resolveKeyPath(bc.IAM.Token.PublicKey)
 	bc.SetVersion(version)
 	return bc, nil
 }
@@ -411,8 +415,8 @@ func NewRouter(
 
 	// 配置 Swagger 文档
 	if bc.Server.Swagger {
-		docs.SwaggerInfo.Title = "artweb"
-		docs.SwaggerInfo.Description = "artweb自动化运维平台"
+		docs.SwaggerInfo.Title = "grain"
+		docs.SwaggerInfo.Description = "grain运营管控平台"
 		docs.SwaggerInfo.Version = version
 		docs.SwaggerInfo.Host = fmt.Sprintf("%s:%d", bc.Server.Host, bc.Server.Port)
 		docs.SwaggerInfo.Schemes = []string{"http", "https"}
@@ -440,7 +444,7 @@ func NewRouter(
 	r.Use(middleware.TracingMiddleware(logger))
 
 	// 注册跨域请求处理中间件
-	r.Use(middleware.CorsMiddleware(bc.CORS))
+	r.Use(middleware.CorsMiddleware(bc.Security.CORS))
 
 	// host请求头防护中间件
 	if bc.Security.HostGuard.Enable {
@@ -506,10 +510,10 @@ func publicKeysEqual(a, b crypto.PublicKey) bool {
 	return string(ap) == string(bp)
 }
 func loadJWTKeys(bc *conf.Bootstrap) (crypto.PrivateKey, crypto.PublicKey, string, error) {
-	if bc == nil || bc.Security == nil {
+	if bc == nil || bc.IAM == nil {
 		return nil, nil, "", fmt.Errorf("security configuration is required")
 	}
-	material := strings.TrimSpace(bc.Security.Token.PrivateKey)
+	material := strings.TrimSpace(bc.IAM.Token.PrivateKey)
 	if material == "" {
 		return nil, nil, "", fmt.Errorf("security.token.private_key is required")
 	}
@@ -521,7 +525,7 @@ func loadJWTKeys(bc *conf.Bootstrap) (crypto.PrivateKey, crypto.PublicKey, strin
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("derive JWT public key: %w", err)
 	}
-	if configured := strings.TrimSpace(bc.Security.Token.PublicKey); configured != "" {
+	if configured := strings.TrimSpace(bc.IAM.Token.PublicKey); configured != "" {
 		configuredKey, err := cryptoutil.LoadPublicKey(configured)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("load JWT public key: %w", err)
@@ -531,7 +535,7 @@ func loadJWTKeys(bc *conf.Bootstrap) (crypto.PrivateKey, crypto.PublicKey, strin
 		}
 		publicKey = configuredKey
 	}
-	kid := bc.Security.Token.KeyID
+	kid := bc.IAM.Token.KeyID
 	if strings.TrimSpace(kid) == "" {
 		kid, err = auth.KeyID(publicKey)
 		if err != nil {

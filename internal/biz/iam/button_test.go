@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"grain/pkg/db"
 	"grain/pkg/errorx"
 )
 
@@ -239,7 +240,7 @@ func TestButtonUseCase_GetAndList(t *testing.T) {
 	})
 
 	t.Run("list and list all", func(t *testing.T) {
-		list, total, err := uc.List(ctx, ButtonListOptions{})
+		list, total, err := uc.List(ctx, db.ListOptions{})
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), total)
 		assert.Len(t, list, 1)

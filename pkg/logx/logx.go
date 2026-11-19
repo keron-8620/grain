@@ -60,7 +60,7 @@ func New(opts *Options) (*slog.Logger, func() error, error) {
 	}
 
 	var writers []io.Writer
-	var closer func() error = func() error { return nil }
+	closer := func() error { return nil }
 
 	enableStdout := opts.EnableStdout
 	enableFile := opts.EnableFile

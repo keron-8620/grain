@@ -52,7 +52,7 @@ func TestTokenManager_Basics(t *testing.T) {
 		newPair, newRefreshClaims, err := mgr.RotateTokenPair(ctx, user, originalRefreshClaims, 1, "new-jti-123")
 		require.NoError(t, err)
 		assert.Equal(t, originalRefreshClaims.FamilyID, newRefreshClaims.FamilyID)
-		assert.Equal(t, originalRefreshClaims.AuthTime.Time.Unix(), newRefreshClaims.AuthTime.Time.Unix())
+		assert.Equal(t, originalRefreshClaims.AuthTime.Unix(), newRefreshClaims.AuthTime.Unix())
 		assert.Equal(t, "new-jti-123", newRefreshClaims.ID)
 		assert.NotEmpty(t, newPair.AccessToken)
 		assert.NotEmpty(t, newPair.RefreshToken)

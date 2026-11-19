@@ -10,6 +10,7 @@ import (
 
 	biz "grain/internal/biz/iam"
 	"grain/pkg/auth"
+	"grain/pkg/db"
 	"grain/pkg/db/filter"
 )
 
@@ -159,7 +160,7 @@ func TestApiRepo_CRUD(t *testing.T) {
 	assert.Contains(t, err.Error(), "record not found")
 
 	// 6. List
-	list, total, err := repo.List(ctx, biz.ApiListOptions{
+	list, total, err := repo.List(ctx, db.ListOptions{
 		PageSize: 10,
 		Filters: []filter.ListFilter{
 			{Field: "label", Op: filter.ListFilterContains, Value: "Updated"},
@@ -258,7 +259,7 @@ func TestApiRepo_CasbinPolicy(t *testing.T) {
 	assert.False(t, hasNewAfterDel)
 
 	// 4. AddPolicies batch
-	batchApis := []*biz.Api{
+	batchApis := []biz.Api{
 		{ID: 11, URL: "/api/v1/posts", Method: "GET"},
 		{ID: 12, URL: "/api/v1/comments", Method: "POST"},
 	}

@@ -23,7 +23,7 @@ func minimalBootstrap(t *testing.T) *Bootstrap {
 			Type: "sqlite",
 			Dsn:  "grain.db",
 		},
-		Security: &SecurityConfig{
+		IAM: &IAMConfig{
 			Token: TokenConfig{PrivateKey: string(pemBytes)},
 		},
 	}
@@ -34,7 +34,7 @@ func TestBootstrapValidate(t *testing.T) {
 		bc := minimalBootstrap(t)
 		require.NoError(t, bc.Validate())
 		assert.NotNil(t, bc.Security)
-		assert.NotNil(t, bc.CORS)
+		assert.NotNil(t, bc.Security.CORS)
 		assert.NotNil(t, bc.Log)
 	})
 
@@ -105,50 +105,67 @@ func TestBootstrapValidate(t *testing.T) {
 
 	t.Run("login lockout validation", func(t *testing.T) {
 		bc := minimalBootstrap(t)
-		bc.Security.Login.MaxFailedAttempts = 5
+		bc.IAM.Login.MaxFailedAttempts = 5
 		assert.Error(t, bc.Validate(), "lock duration is required when lockout is enabled")
 
-		bc.Security.Login.LockDuration = 15 * time.Minute
+		bc.IAM.Login.LockDuration = 15 * time.Minute
 		require.NoError(t, bc.Validate())
 
-		bc.Security.Login.MaxFailedAttempts = -1
+		bc.IAM.Login.MaxFailedAttempts = -1
 		assert.Error(t, bc.Validate())
 
 		bc = minimalBootstrap(t)
-		bc.Security.Login.LockDuration = -time.Minute
+		bc.IAM.Login.LockDuration = -time.Minute
 		assert.Error(t, bc.Validate())
 	})
 
 	t.Run("password strength level validation", func(t *testing.T) {
 		for level := 0; level <= 3; level++ {
 			bc := minimalBootstrap(t)
-			bc.Security.Password.StrengthLevel = level
+			bc.IAM.Password.StrengthLevel = level
 			require.NoError(t, bc.Validate())
 		}
 		for _, level := range []int{-1, 4} {
 			bc := minimalBootstrap(t)
-			bc.Security.Password.StrengthLevel = level
+			bc.IAM.Password.StrengthLevel = level
 			assert.Error(t, bc.Validate())
 		}
 	})
 
 	t.Run("refresh method must match access method", func(t *testing.T) {
 		bc := minimalBootstrap(t)
-		bc.Security.Token.AccessMethod = "RS256"
-		bc.Security.Token.RefreshMethod = "RS512"
+		bc.IAM.Token.AccessMethod = "RS256"
+		bc.IAM.Token.RefreshMethod = "RS512"
 		assert.Error(t, bc.Validate())
 
-		bc.Security.Token.RefreshMethod = "RS256"
+		bc.IAM.Token.RefreshMethod = "RS256"
 		require.NoError(t, bc.Validate())
+	})
+
+	t.Run("script repository validation", func(t *testing.T) {
+		bc := minimalBootstrap(t)
+		bc.Job = &JobConfig{ScriptRepo: &ScriptRepoConfig{Enable: true}}
+		assert.Error(t, bc.Validate(), "url and dir are required when enabled")
+
+		bc.Job.ScriptRepo.URL = "https://example.com/scripts.git"
+		bc.Job.ScriptRepo.Dir = "data/scripts"
+		bc.Job.ScriptRepo.AuthType = "kerberos"
+		assert.Error(t, bc.Validate(), "unsupported auth type")
+
+		bc.Job.ScriptRepo.AuthType = "http"
+		require.NoError(t, bc.Validate())
+
+		bc.Job.ScriptRepo.Timeout = -time.Second
+		assert.Error(t, bc.Validate())
 	})
 
 	t.Run("signing key is required", func(t *testing.T) {
 		bc := minimalBootstrap(t)
-		bc.Security.Token.PrivateKey = ""
+		bc.IAM.Token.PrivateKey = ""
 		assert.Error(t, bc.Validate())
 
 		bc = minimalBootstrap(t)
-		bc.Security.Token.AccessMethod = "HS256"
+		bc.IAM.Token.AccessMethod = "HS256"
 		assert.Error(t, bc.Validate(), "symmetric algorithms are not supported")
 	})
 }

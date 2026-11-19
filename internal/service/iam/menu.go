@@ -225,7 +225,7 @@ func (s *Service) ListMenus(c *gin.Context) {
 		})
 	}
 
-	menus, total, err := s.biz.Menu.List(c.Request.Context(), biz.MenuListOptions{
+	menus, total, err := s.biz.Menu.List(c.Request.Context(), db.ListOptions{
 		Offset:   offset,
 		PageSize: limit,
 		Filters:  filters,

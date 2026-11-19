@@ -17,21 +17,13 @@ type Role struct {
 	Name      string
 	Descr     string
 	ApiIDs    []uint64
-	Apis      []*Api
+	Apis      []Api
 	MenuIDs   []uint64
-	Menus     []*Menu
+	Menus     []Menu
 	ButtonIDs []uint64
-	Buttons   []*Button
+	Buttons   []Button
 	CreatedAt time.Time
 	UpdatedAt time.Time
-}
-
-// RoleListOptions are the role list query options
-type RoleListOptions struct {
-	Offset   int
-	PageSize int
-	Filters  []db.ListFilter
-	OrderBy  string
 }
 
 // RoleRepo is the role repo interface contract
@@ -41,8 +33,9 @@ type RoleRepo interface {
 	Delete(ctx context.Context, id uint64) error
 	FindByID(ctx context.Context, id uint64, preloads ...string) (*Role, error)
 	FindByName(ctx context.Context, name string) (*Role, error)
-	List(ctx context.Context, opts RoleListOptions) ([]*Role, int64, error)
-	ListAllWithRelations(ctx context.Context) ([]*Role, error)
+	List(ctx context.Context, opts db.ListOptions) ([]Role, int64, error)
+	ListAllWithRelations(ctx context.Context) ([]Role, error)
+	// CountUsersByRoleID counts all users referencing the role, including soft-deleted users.
 	CountUsersByRoleID(ctx context.Context, roleID uint64) (int64, error)
 
 	// Casbin grouping policies
@@ -52,18 +45,18 @@ type RoleRepo interface {
 
 // RoleUseCase handles role management, permission assignment, and authorization policy synchronization.
 type RoleUseCase struct {
-	repo     RoleRepo
+	roleRepo RoleRepo
 	userRepo UserRepo
 	logger   *slog.Logger
 }
 
 // NewRoleUseCase creates a new RoleUseCase instance.
-func NewRoleUseCase(repo RoleRepo, userRepo UserRepo, logger *slog.Logger) *RoleUseCase {
+func NewRoleUseCase(roleRepo RoleRepo, userRepo UserRepo, logger *slog.Logger) *RoleUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &RoleUseCase{
-		repo:     repo,
+		roleRepo: roleRepo,
 		userRepo: userRepo,
 		logger:   logger,
 	}
@@ -81,7 +74,7 @@ func (uc *RoleUseCase) Create(ctx context.Context, role *Role) (*Role, error) {
 	}
 	role.Name = name
 
-	existing, err := uc.repo.FindByName(ctx, role.Name)
+	existing, err := uc.roleRepo.FindByName(ctx, role.Name)
 	if err != nil && !errorx.IsRecordNotFound(err) {
 		return nil, errorx.FromDBError(err)
 	}
@@ -89,7 +82,7 @@ func (uc *RoleUseCase) Create(ctx context.Context, role *Role) (*Role, error) {
 		return nil, errorx.CodeDuplicatedKey.Error("角色名称已存在")
 	}
 
-	created, err := uc.repo.Create(ctx, role)
+	created, err := uc.roleRepo.Create(ctx, role)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -97,12 +90,12 @@ func (uc *RoleUseCase) Create(ctx context.Context, role *Role) (*Role, error) {
 	rollback := func() {
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
-		if err := uc.repo.Delete(rbCtx, created.ID); err != nil {
+		if err := uc.roleRepo.Delete(rbCtx, created.ID); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to roll back role model creation", slog.Uint64("role_id", created.ID), slog.Any("error", err))
 		}
 	}
 
-	if err := uc.repo.AddGroupPolicy(ctx, created); err != nil {
+	if err := uc.roleRepo.AddGroupPolicy(ctx, created); err != nil {
 		uc.logger.ErrorContext(ctx, "failed to add casbin group policy for role", slog.Uint64("role_id", created.ID), slog.Any("error", err))
 		rollback()
 		return nil, errorx.Wrap(err, errorx.CodeSystemError, "添加角色权限策略失败")
@@ -123,7 +116,7 @@ func (uc *RoleUseCase) Update(ctx context.Context, role *Role) (*Role, error) {
 	}
 	role.Name = name
 
-	oldRole, err := uc.repo.FindByID(ctx, role.ID, "Apis", "Menus", "Buttons")
+	oldRole, err := uc.roleRepo.FindByID(ctx, role.ID, "Apis", "Menus", "Buttons")
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -133,17 +126,17 @@ func (uc *RoleUseCase) Update(ctx context.Context, role *Role) (*Role, error) {
 
 	// Ensure slice fields are non-nil so DB rollback can clear associations if they were originally empty
 	if oldRole.Apis == nil {
-		oldRole.Apis = []*Api{}
+		oldRole.Apis = []Api{}
 	}
 	if oldRole.Menus == nil {
-		oldRole.Menus = []*Menu{}
+		oldRole.Menus = []Menu{}
 	}
 	if oldRole.Buttons == nil {
-		oldRole.Buttons = []*Button{}
+		oldRole.Buttons = []Button{}
 	}
 
 	if oldRole.Name != role.Name {
-		existing, err := uc.repo.FindByName(ctx, role.Name)
+		existing, err := uc.roleRepo.FindByName(ctx, role.Name)
 		if err != nil && !errorx.IsRecordNotFound(err) {
 			return nil, errorx.FromDBError(err)
 		}
@@ -152,7 +145,7 @@ func (uc *RoleUseCase) Update(ctx context.Context, role *Role) (*Role, error) {
 		}
 	}
 
-	updated, err := uc.repo.Update(ctx, role)
+	updated, err := uc.roleRepo.Update(ctx, role)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -161,25 +154,25 @@ func (uc *RoleUseCase) Update(ctx context.Context, role *Role) (*Role, error) {
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		var errs []error
-		if _, err := uc.repo.Update(rbCtx, oldRole); err != nil {
+		if _, err := uc.roleRepo.Update(rbCtx, oldRole); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to roll back role model update", slog.Uint64("role_id", role.ID), slog.Any("error", err))
 			errs = append(errs, err)
 		}
-		if err := uc.repo.RemoveGroupPolicy(rbCtx, updated); err != nil {
+		if err := uc.roleRepo.RemoveGroupPolicy(rbCtx, updated); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to clean up updated role policy", slog.Uint64("role_id", role.ID), slog.Any("error", err))
 			errs = append(errs, err)
 		}
-		if err := uc.repo.AddGroupPolicy(rbCtx, oldRole); err != nil {
+		if err := uc.roleRepo.AddGroupPolicy(rbCtx, oldRole); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to restore role policy", slog.Uint64("role_id", role.ID), slog.Any("error", err))
 			errs = append(errs, err)
 		}
 		return errors.Join(errs...)
 	}
 
-	if err := uc.repo.RemoveGroupPolicy(ctx, oldRole); err != nil {
+	if err := uc.roleRepo.RemoveGroupPolicy(ctx, oldRole); err != nil {
 		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "删除旧角色权限策略失败")
 	}
-	if err := uc.repo.AddGroupPolicy(ctx, updated); err != nil {
+	if err := uc.roleRepo.AddGroupPolicy(ctx, updated); err != nil {
 		uc.logger.ErrorContext(ctx, "failed to update casbin group policy for role", slog.Uint64("role_id", role.ID), slog.Any("error", err))
 		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "更新角色权限策略失败")
 	}
@@ -205,7 +198,7 @@ func (uc *RoleUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeInvalidParam.Error("无效的角色ID")
 	}
 
-	role, err := uc.repo.FindByID(ctx, id, "Apis", "Menus", "Buttons")
+	role, err := uc.roleRepo.FindByID(ctx, id, "Apis", "Menus", "Buttons")
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
@@ -213,21 +206,21 @@ func (uc *RoleUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeRecordNotFound.Error("角色不存在")
 	}
 
-	userCount, err := uc.repo.CountUsersByRoleID(ctx, id)
+	userCount, err := uc.roleRepo.CountUsersByRoleID(ctx, id)
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
 	if userCount > 0 {
-		return errorx.CodeOperationNotAllowed.Error("角色下仍有关联用户，无法删除")
+		return errorx.CodeOperationNotAllowed.Error("角色仍被用户引用（包括已删除用户），无法删除")
 	}
 
 	cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if err := uc.repo.RemoveGroupPolicy(cleanCtx, role); err != nil {
+	if err := uc.roleRepo.RemoveGroupPolicy(cleanCtx, role); err != nil {
 		return errorx.Wrap(err, errorx.CodeSystemError, "删除角色权限策略失败")
 	}
-	if err := uc.repo.Delete(ctx, id); err != nil {
-		restoreErr := uc.repo.AddGroupPolicy(cleanCtx, role)
+	if err := uc.roleRepo.Delete(ctx, id); err != nil {
+		restoreErr := uc.roleRepo.AddGroupPolicy(cleanCtx, role)
 		return errorx.Wrap(errors.Join(errorx.FromDBError(err), restoreErr), errorx.CodeSystemError, "删除角色失败")
 	}
 
@@ -240,7 +233,7 @@ func (uc *RoleUseCase) Get(ctx context.Context, id uint64) (*Role, error) {
 		return nil, errorx.CodeInvalidParam.Error("无效的角色ID")
 	}
 
-	role, err := uc.repo.FindByID(ctx, id, "Apis", "Menus", "Buttons")
+	role, err := uc.roleRepo.FindByID(ctx, id, "Apis", "Menus", "Buttons")
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -258,7 +251,7 @@ func (uc *RoleUseCase) GetByName(ctx context.Context, name string) (*Role, error
 		return nil, errorx.CodeMissingParam.Error("角色名称不能为空")
 	}
 
-	role, err := uc.repo.FindByName(ctx, cleanName)
+	role, err := uc.roleRepo.FindByName(ctx, cleanName)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -270,8 +263,8 @@ func (uc *RoleUseCase) GetByName(ctx context.Context, name string) (*Role, error
 }
 
 // List lists roles with conditions.
-func (uc *RoleUseCase) List(ctx context.Context, opts RoleListOptions) ([]*Role, int64, error) {
-	roles, total, err := uc.repo.List(ctx, opts)
+func (uc *RoleUseCase) List(ctx context.Context, opts db.ListOptions) ([]Role, int64, error) {
+	roles, total, err := uc.roleRepo.List(ctx, opts)
 	if err != nil {
 		return nil, 0, errorx.FromDBError(err)
 	}
@@ -279,8 +272,8 @@ func (uc *RoleUseCase) List(ctx context.Context, opts RoleListOptions) ([]*Role,
 }
 
 // ListAllWithRelations lists all roles preloaded with relations.
-func (uc *RoleUseCase) ListAllWithRelations(ctx context.Context) ([]*Role, error) {
-	roles, err := uc.repo.ListAllWithRelations(ctx)
+func (uc *RoleUseCase) ListAllWithRelations(ctx context.Context) ([]Role, error) {
+	roles, err := uc.roleRepo.ListAllWithRelations(ctx)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}

@@ -34,11 +34,8 @@ func NewMenuRepo(
 
 // ==================== DO ↔ PO conversion ====================
 
-func toBizMenu(po *menuPO) *biz.Menu {
-	if po == nil {
-		return nil
-	}
-	m := &biz.Menu{
+func toBizMenu(po menuPO) biz.Menu {
+	m := biz.Menu{
 		ID:        po.ID,
 		Path:      po.Path,
 		Component: po.Component,
@@ -56,14 +53,14 @@ func toBizMenu(po *menuPO) *biz.Menu {
 	}
 
 	if po.Parent != nil {
-		m.Parent = toBizMenu(po.Parent)
+		m.Parent = new(toBizMenu(*po.Parent))
 	}
 
 	if len(po.Apis) > 0 {
-		m.Apis = make([]*biz.Api, len(po.Apis))
+		m.Apis = make([]biz.Api, len(po.Apis))
 		m.ApiIDs = make([]uint64, len(po.Apis))
 		for i := range po.Apis {
-			m.Apis[i] = toBizApi(&po.Apis[i])
+			m.Apis[i] = toBizApi(po.Apis[i])
 			m.ApiIDs[i] = po.Apis[i].ID
 		}
 	}
@@ -71,11 +68,8 @@ func toBizMenu(po *menuPO) *biz.Menu {
 	return m
 }
 
-func newMenuPO(do *biz.Menu) *menuPO {
-	if do == nil {
-		return nil
-	}
-	po := &menuPO{
+func newMenuPO(do biz.Menu) menuPO {
+	po := menuPO{
 		StandardModel: db.StandardModel{
 			BaseModel: db.BaseModel{ID: do.ID},
 			CreatedAt: do.CreatedAt,
@@ -97,8 +91,8 @@ func newMenuPO(do *biz.Menu) *menuPO {
 	if len(do.Apis) > 0 {
 		po.Apis = make([]apiPO, 0, len(do.Apis))
 		for _, a := range do.Apis {
-			if a != nil && a.ID > 0 {
-				po.Apis = append(po.Apis, *newApiPO(a))
+			if a.ID > 0 {
+				po.Apis = append(po.Apis, newApiPO(a))
 			}
 		}
 	} else if len(do.ApiIDs) > 0 {
@@ -121,7 +115,7 @@ func (r *menuRepo) Create(ctx context.Context, do *biz.Menu) (*biz.Menu, error) 
 		return nil, errors.New("create menu: model must not be nil")
 	}
 
-	po := newMenuPO(do)
+	po := newMenuPO(*do)
 	now := time.Now()
 	if po.CreatedAt.IsZero() {
 		po.CreatedAt = now
@@ -144,7 +138,7 @@ func (r *menuRepo) Create(ctx context.Context, do *biz.Menu) (*biz.Menu, error) 
 	}
 
 	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpWrite, "create menu", func(dbCtx context.Context) error {
-		return db.DBCreateRelationTx(dbCtx, r.data.gormdb, &menuPO{}, po, upmap)
+		return db.DBCreateRelationTx(dbCtx, r.data.gormdb, &menuPO{}, &po, upmap)
 	}, slog.String("name", po.Name), slog.String("path", po.Path)); err != nil {
 		return nil, err
 	}
@@ -158,7 +152,7 @@ func (r *menuRepo) Update(ctx context.Context, do *biz.Menu) (*biz.Menu, error) 
 		return nil, errors.New("update menu: invalid argument")
 	}
 
-	po := newMenuPO(do)
+	po := newMenuPO(*do)
 	updates := po.ToUpdateMap()
 
 	upmap := make(map[string]any, 1)
@@ -231,10 +225,10 @@ func (r *menuRepo) FindByID(ctx context.Context, id uint64, preloads ...string) 
 		return nil, err
 	}
 
-	return toBizMenu(&po), nil
+	return new(toBizMenu(po)), nil
 }
 
-func (r *menuRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]*biz.Menu, error) {
+func (r *menuRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]biz.Menu, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -259,9 +253,9 @@ func (r *menuRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...stri
 		return nil, err
 	}
 
-	res := make([]*biz.Menu, 0, len(pos))
+	res := make([]biz.Menu, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizMenu(&pos[i]))
+		res = append(res, toBizMenu(pos[i]))
 	}
 	return res, nil
 }
@@ -281,7 +275,7 @@ func (r *menuRepo) FindByName(ctx context.Context, name string) (*biz.Menu, erro
 		return nil, err
 	}
 
-	return toBizMenu(&po), nil
+	return new(toBizMenu(po)), nil
 }
 
 func (r *menuRepo) FindByPath(ctx context.Context, path string) (*biz.Menu, error) {
@@ -299,10 +293,10 @@ func (r *menuRepo) FindByPath(ctx context.Context, path string) (*biz.Menu, erro
 		return nil, err
 	}
 
-	return toBizMenu(&po), nil
+	return new(toBizMenu(po)), nil
 }
 
-func (r *menuRepo) List(ctx context.Context, opts biz.MenuListOptions) ([]*biz.Menu, int64, error) {
+func (r *menuRepo) List(ctx context.Context, opts db.ListOptions) ([]biz.Menu, int64, error) {
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
 		r.logger.DebugContext(
 			ctx,
@@ -311,10 +305,7 @@ func (r *menuRepo) List(ctx context.Context, opts biz.MenuListOptions) ([]*biz.M
 		)
 	}
 
-	if opts.PageSize <= 0 {
-		opts.PageSize = db.DefaultPageSize
-	}
-	if err := db.ValidateListOptions(opts.Offset, opts.PageSize); err != nil {
+	if err := opts.Normalize(); err != nil {
 		return nil, 0, err
 	}
 
@@ -347,14 +338,14 @@ func (r *menuRepo) List(ctx context.Context, opts biz.MenuListOptions) ([]*biz.M
 		return nil, 0, err
 	}
 
-	res := make([]*biz.Menu, 0, len(pos))
+	res := make([]biz.Menu, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizMenu(&pos[i]))
+		res = append(res, toBizMenu(pos[i]))
 	}
 	return res, total, nil
 }
 
-func (r *menuRepo) ListAllWithApis(ctx context.Context) ([]*biz.Menu, error) {
+func (r *menuRepo) ListAllWithApis(ctx context.Context) ([]biz.Menu, error) {
 	qp := db.QueryParams{
 		Preloads: []string{"Apis"},
 		OrderBy:  []string{"id ASC"},
@@ -367,9 +358,9 @@ func (r *menuRepo) ListAllWithApis(ctx context.Context) ([]*biz.Menu, error) {
 		return nil, err
 	}
 
-	res := make([]*biz.Menu, 0, len(pos))
+	res := make([]biz.Menu, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizMenu(&pos[i]))
+		res = append(res, toBizMenu(pos[i]))
 	}
 	return res, nil
 }
@@ -405,7 +396,7 @@ func (r *menuRepo) AddGroupPolicy(ctx context.Context, menu *biz.Menu) error {
 
 	// 2. Related API inheritance policy: (menu_sub, api_sub)
 	for _, api := range menu.Apis {
-		if api != nil && api.ID > 0 {
+		if api.ID > 0 {
 			apiSub := auth.ApiToSubject(api.ID)
 			rules = append(rules, []string{sub, apiSub})
 		}

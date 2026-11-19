@@ -40,18 +40,11 @@ redis:
   password: ""
   db: 0
 
-cors:
-  allow_origins:
-    - "*"
-  allow_credentials: false
-
-log:
-  level: info
-  format: text
-  enable_stdout: true
-  enable_file: false
-
 security:
+  cors:
+    allow_origins:
+      - "*"
+    allow_credentials: false
   host_guard:
     enable: false
     trusted_hosts: []
@@ -59,6 +52,15 @@ security:
     check_timestamp: false
     tolerance: 300s
     future_tolerance: 60s
+
+log:
+  level: info
+  format: text
+  enable_stdout: true
+  enable_file: false
+
+
+iam:
   token:
     access_duration: 2h
     refresh_duration: 168h
@@ -81,3 +83,22 @@ security:
     # 0=至少6位；1=至少8位；2=至少8位且含字母和数字；
     # 3=至少10位且含大写、小写、数字和特殊字符。
     strength_level: 1
+  
+
+# 脚本正文统一提交到 Git 仓库，数据库只保存元数据。
+job:
+  script_repo:
+    enable: false
+    url: ""              # 例如 https://github.com/org/scripts.git 或 git@host:org/scripts.git
+    branch: "main"
+    dir: "storage/scripts"  # 本地工作副本目录，需可写
+    timeout: 60s
+    author_name: "grain"
+    author_email: "grain@localhost"
+    auth_type: "none"    # none / http / ssh
+    username: ""         # http 用户名或 ssh 用户
+    password: ""         # http 密码或访问令牌
+    ssh_key_path: ""     # ssh 私钥路径；留空则使用 ssh-agent
+    ssh_key_passphrase: ""
+    insecure_skip_tls: false
+

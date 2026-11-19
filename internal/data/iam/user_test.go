@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	biz "grain/internal/biz/iam"
+	"grain/pkg/db"
 )
 
 func TestUserRepo_RotateRefreshTokenFamily_FailClosed(t *testing.T) {
@@ -180,7 +181,7 @@ func TestUserRepo_CRUD(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	list, total, err := repo.List(ctx, biz.UserListOptions{
+	list, total, err := repo.List(ctx, db.ListOptions{
 		PageSize: 10,
 	})
 	require.NoError(t, err)
@@ -234,6 +235,19 @@ func TestUserRepo_CRUD(t *testing.T) {
 	deleted, err := repo.FindByID(ctx, created.ID)
 	require.NoError(t, err)
 	assert.Nil(t, deleted)
+
+	// Soft-deleted usernames stay reserved and can never be reused.
+	exists, err := repo.UsernameExists(ctx, "alice")
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	_, err = repo.Create(ctx, &biz.User{
+		Username: "alice",
+		Password: "another_hash",
+		IsActive: true,
+		RoleID:   role.ID,
+	})
+	require.Error(t, err)
 
 	// Delete non-existent
 	err = repo.Delete(ctx, 99999)

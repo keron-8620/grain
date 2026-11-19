@@ -108,29 +108,29 @@ func TestMemoryTokenVersionStore(t *testing.T) {
 		// Version exists, family not revoked
 		ver, revoked, err = memStore.GetTokenAndFamilyRevocation(ctx, 999, "fam-test")
 		require.NoError(t, err)
-		assert.Equal(t, uint64(5), ver)
+		assert.Equal(t, uint64(5), ver) // or expected version
 		assert.False(t, revoked)
 
 		// Empty family
 		ver, revoked, err = memStore.GetTokenAndFamilyRevocation(ctx, 999, "")
 		require.NoError(t, err)
-		assert.Equal(t, uint64(5), ver)
+		assert.Equal(t, uint64(5), ver) // or expected version
 		assert.False(t, revoked)
 
 		// Revoke family
 		require.NoError(t, memStore.RevokeFamily(ctx, "fam-test", 0))
 		ver, revoked, err = memStore.GetTokenAndFamilyRevocation(ctx, 999, "fam-test")
 		require.NoError(t, err)
-		assert.Equal(t, uint64(5), ver)
+		assert.Equal(t, uint64(5), ver) // or expected version
 		assert.True(t, revoked)
 
 		// Short TTL family
 		require.NoError(t, memStore.RevokeFamily(ctx, "fam-ttl", 20*time.Millisecond))
-		ver, revoked, err = memStore.GetTokenAndFamilyRevocation(ctx, 999, "fam-ttl")
+		_, revoked, err = memStore.GetTokenAndFamilyRevocation(ctx, 999, "fam-ttl")
 		require.NoError(t, err)
 		assert.True(t, revoked)
 		time.Sleep(30 * time.Millisecond)
-		ver, revoked, err = memStore.GetTokenAndFamilyRevocation(ctx, 999, "fam-ttl")
+		_, revoked, err = memStore.GetTokenAndFamilyRevocation(ctx, 999, "fam-ttl")
 		require.NoError(t, err)
 		assert.False(t, revoked)
 	})

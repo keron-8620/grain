@@ -10,6 +10,7 @@ import (
 
 	biz "grain/internal/biz/iam"
 	"grain/pkg/auth"
+	"grain/pkg/db"
 	"grain/pkg/db/filter"
 )
 
@@ -136,7 +137,7 @@ func TestRoleRepo_CRUD(t *testing.T) {
 	role2, err := repo.Create(ctx, &biz.Role{Name: "Editor", Descr: "Content Editor"})
 	require.NoError(t, err)
 
-	list, total, err := repo.List(ctx, biz.RoleListOptions{
+	list, total, err := repo.List(ctx, db.ListOptions{
 		PageSize: 10,
 		Filters: []filter.ListFilter{
 			{Field: "name", Op: filter.ListFilterContains, Value: "Admin"},
@@ -172,8 +173,20 @@ func TestRoleRepo_CRUD(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "role still has associated users and cannot be deleted")
 
-	// Delete user then delete role2 -> MUST SUCCEED
+	// Soft-deleted users still hold the FK reference, so role deletion remains blocked.
 	err = gormDB.Where("username = ?", "editor_user").Delete(&userPO{}).Error
+	require.NoError(t, err)
+
+	count, err = repo.CountUsersByRoleID(ctx, role2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+
+	err = repo.Delete(ctx, role2.ID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "role still has associated users and cannot be deleted")
+
+	// Only a hard delete (Unscoped) releases the reference and allows role deletion.
+	err = gormDB.Unscoped().Where("username = ?", "editor_user").Delete(&userPO{}).Error
 	require.NoError(t, err)
 
 	err = repo.Delete(ctx, role2.ID)

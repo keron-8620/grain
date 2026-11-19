@@ -15,7 +15,7 @@ import (
 //	0 - minimum 6 characters (legacy default)
 //	1 - minimum 8 characters
 //	2 - minimum 8 characters and both letters and digits
-//	3 - minimum 10 characters, upper/lowercase letters, digits and a symbol
+//	3 - minimum 12 characters, upper/lowercase letters, digits and a symbol
 type PasswordPolicy struct {
 	StrengthLevel int
 }
@@ -41,7 +41,7 @@ func (p PasswordPolicy) Validate(password string) error {
 	case 1, 2:
 		minLength = 8
 	case 3:
-		minLength = 10
+		minLength = 12
 	}
 	if utf8.RuneCountInString(password) < minLength {
 		return errorx.CodePasswordStrengthFailed.Error(fmt.Sprintf("密码长度不能少于%d位", minLength))
@@ -71,7 +71,7 @@ func (p PasswordPolicy) Validate(password string) error {
 
 	switch p.StrengthLevel {
 	case 2:
-		if !(hasUpper || hasLower) || !hasDigit {
+		if (!hasUpper && !hasLower) || !hasDigit {
 			return errorx.CodePasswordStrengthFailed.Error("密码必须同时包含字母和数字")
 		}
 	case 3:

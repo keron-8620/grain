@@ -37,11 +37,8 @@ func NewApiRepo(
 
 // ==================== DO ↔ PO conversion ====================
 
-func toBizApi(po *apiPO) *biz.Api {
-	if po == nil {
-		return nil
-	}
-	return &biz.Api{
+func toBizApi(po apiPO) biz.Api {
+	return biz.Api{
 		ID:        po.ID,
 		URL:       po.URL,
 		Method:    po.Method,
@@ -52,11 +49,8 @@ func toBizApi(po *apiPO) *biz.Api {
 	}
 }
 
-func newApiPO(do *biz.Api) *apiPO {
-	if do == nil {
-		return nil
-	}
-	return &apiPO{
+func newApiPO(do biz.Api) apiPO {
+	return apiPO{
 		ID:     do.ID,
 		URL:    strings.TrimSpace(do.URL),
 		Method: strings.ToUpper(strings.TrimSpace(do.Method)),
@@ -77,7 +71,7 @@ func (r *apiRepo) Create(ctx context.Context, do *biz.Api) (*biz.Api, error) {
 		return nil, errors.New("create API: url and method cannot be empty")
 	}
 
-	po := newApiPO(do)
+	po := newApiPO(*do)
 	now := time.Now()
 	if po.CreatedAt.IsZero() {
 		po.CreatedAt = now
@@ -95,12 +89,12 @@ func (r *apiRepo) Create(ctx context.Context, do *biz.Api) (*biz.Api, error) {
 	}
 
 	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpWrite, "create API", func(dbCtx context.Context) error {
-		return db.DBCreate(dbCtx, r.data.gormdb, &apiPO{}, po)
+		return db.DBCreate(dbCtx, r.data.gormdb, &apiPO{}, &po)
 	}, slog.String("url", po.URL), slog.String("method", po.Method)); err != nil {
 		return nil, err
 	}
 
-	return toBizApi(po), nil
+	return new(toBizApi(po)), nil
 }
 
 func (r *apiRepo) Update(ctx context.Context, do *biz.Api) (*biz.Api, error) {
@@ -113,7 +107,7 @@ func (r *apiRepo) Update(ctx context.Context, do *biz.Api) (*biz.Api, error) {
 		return nil, errors.New("update API: url and method cannot be empty")
 	}
 
-	po := newApiPO(do)
+	po := newApiPO(*do)
 	updates := po.ToUpdateMap()
 
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
@@ -190,10 +184,10 @@ func (r *apiRepo) FindByID(ctx context.Context, id uint64) (*biz.Api, error) {
 		return nil, err
 	}
 
-	return toBizApi(&po), nil
+	return new(toBizApi(po)), nil
 }
 
-func (r *apiRepo) FindByIDs(ctx context.Context, ids []uint64) ([]*biz.Api, error) {
+func (r *apiRepo) FindByIDs(ctx context.Context, ids []uint64) ([]biz.Api, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -213,9 +207,9 @@ func (r *apiRepo) FindByIDs(ctx context.Context, ids []uint64) ([]*biz.Api, erro
 		return nil, err
 	}
 
-	res := make([]*biz.Api, 0, len(pos))
+	res := make([]biz.Api, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizApi(&pos[i]))
+		res = append(res, toBizApi(pos[i]))
 	}
 	return res, nil
 }
@@ -244,10 +238,10 @@ func (r *apiRepo) FindByURLAndMethod(ctx context.Context, url, method string) (*
 		return nil, err
 	}
 
-	return toBizApi(&po), nil
+	return new(toBizApi(po)), nil
 }
 
-func (r *apiRepo) FindByRoutes(ctx context.Context, routes []biz.ApiRoute) ([]*biz.Api, error) {
+func (r *apiRepo) FindByRoutes(ctx context.Context, routes []biz.ApiRoute) ([]biz.Api, error) {
 	if len(routes) == 0 {
 		return nil, nil
 	}
@@ -282,14 +276,14 @@ func (r *apiRepo) FindByRoutes(ctx context.Context, routes []biz.ApiRoute) ([]*b
 		return nil, err
 	}
 
-	res := make([]*biz.Api, len(pos))
+	res := make([]biz.Api, len(pos))
 	for i := range pos {
-		res[i] = toBizApi(&pos[i])
+		res[i] = toBizApi(pos[i])
 	}
 	return res, nil
 }
 
-func (r *apiRepo) List(ctx context.Context, opts biz.ApiListOptions) ([]*biz.Api, int64, error) {
+func (r *apiRepo) List(ctx context.Context, opts db.ListOptions) ([]biz.Api, int64, error) {
 
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
 		r.logger.DebugContext(
@@ -299,10 +293,7 @@ func (r *apiRepo) List(ctx context.Context, opts biz.ApiListOptions) ([]*biz.Api
 		)
 	}
 
-	if opts.PageSize <= 0 {
-		opts.PageSize = db.DefaultPageSize
-	}
-	if err := db.ValidateListOptions(opts.Offset, opts.PageSize); err != nil {
+	if err := opts.Normalize(); err != nil {
 		return nil, 0, err
 	}
 
@@ -340,9 +331,9 @@ func (r *apiRepo) List(ctx context.Context, opts biz.ApiListOptions) ([]*biz.Api
 		)
 	}
 
-	res := make([]*biz.Api, 0, len(pos))
+	res := make([]biz.Api, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizApi(&pos[i]))
+		res = append(res, toBizApi(pos[i]))
 	}
 	return res, total, nil
 }
@@ -421,12 +412,12 @@ func (r *apiRepo) AddPolicy(
 		return errors.New("add API policy: request method cannot be empty")
 	}
 
-	return r.AddPolicies(ctx, []*biz.Api{do})
+	return r.AddPolicies(ctx, []biz.Api{*do})
 }
 
 func (r *apiRepo) AddPolicies(
 	ctx context.Context,
-	apis []*biz.Api,
+	apis []biz.Api,
 ) error {
 	if len(apis) == 0 {
 		return nil
@@ -434,7 +425,7 @@ func (r *apiRepo) AddPolicies(
 
 	rules := make([][]string, 0, len(apis))
 	for _, a := range apis {
-		if a == nil || a.ID == 0 || a.URL == "" || a.Method == "" {
+		if a.ID == 0 || a.URL == "" || a.Method == "" {
 			continue
 		}
 		sub := auth.ApiToSubject(a.ID)

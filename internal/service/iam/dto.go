@@ -23,39 +23,39 @@ type (
 
 // UserPageResult 用户分页响应结果
 type UserPageResult struct {
-	List  []*biz.User `json:"list"`              // 用户列表
-	Total int64       `json:"total" example:"1"` // 总用户数
+	List  []biz.User `json:"list"`              // 用户列表
+	Total int64      `json:"total" example:"1"` // 总用户数
 }
 
 // RolePageResult 角色分页响应结果
 type RolePageResult struct {
-	List  []*biz.Role `json:"list"`              // 角色列表
-	Total int64       `json:"total" example:"1"` // 总角色数
+	List  []biz.Role `json:"list"`              // 角色列表
+	Total int64      `json:"total" example:"1"` // 总角色数
 }
 
 // MenuPageResult 菜单分页响应结果
 type MenuPageResult struct {
-	List  []*biz.Menu `json:"list"`              // 菜单列表
-	Total int64       `json:"total" example:"1"` // 总菜单数
+	List  []biz.Menu `json:"list"`              // 菜单列表
+	Total int64      `json:"total" example:"1"` // 总菜单数
 }
 
 // ButtonPageResult 按钮分页响应结果
 type ButtonPageResult struct {
-	List  []*biz.Button `json:"list"`              // 按钮列表
-	Total int64         `json:"total" example:"1"` // 总按钮数
+	List  []biz.Button `json:"list"`              // 按钮列表
+	Total int64        `json:"total" example:"1"` // 总按钮数
 }
 
 // ApiPageResult 接口分页响应结果
 type ApiPageResult struct {
-	List  []*biz.Api `json:"list"`              // 接口列表
-	Total int64      `json:"total" example:"1"` // 总接口数
+	List  []biz.Api `json:"list"`              // 接口列表
+	Total int64     `json:"total" example:"1"` // 总接口数
 }
 
 // ==================== 认证相关 DTO ====================
 
 // LoginReq 用户登录请求
 type LoginReq struct {
-	Username string `json:"username" binding:"required,min=2,max=64" example:"admin"` // 用户名
+	Username string `json:"username" binding:"required,min=2,max=64" example:"admin"`  // 用户名
 	Password string `json:"password" binding:"required,min=6,max=64" example:"123456"` // 密码
 }
 
@@ -81,7 +81,7 @@ type LogoutReq struct {
 type CreateUserReq struct {
 	Username string `json:"username" binding:"required,min=2,max=64" example:"zhangsan"` // 用户名
 	Password string `json:"password" binding:"required,min=6,max=64" example:"123456"`   // 密码 (至少6位)
-	RoleID   uint64 `json:"role_id" binding:"required" example:"1"`                       // 关联角色ID
+	RoleID   uint64 `json:"role_id" binding:"required" example:"1"`                      // 关联角色ID
 	IsActive *bool  `json:"is_active" example:"true"`                                    // 是否启用 (默认启用)
 }
 
@@ -95,7 +95,7 @@ type UpdateUserReq struct {
 
 // ChangePasswordReq 修改当前用户密码请求
 type ChangePasswordReq struct {
-	OldPassword string `json:"old_password" binding:"required" example:"123456"`         // 旧密码
+	OldPassword string `json:"old_password" binding:"required" example:"123456"`              // 旧密码
 	NewPassword string `json:"new_password" binding:"required,min=6,max=64" example:"654321"` // 新密码 (至少6位)
 }
 
@@ -106,12 +106,12 @@ type ResetPasswordReq struct {
 
 // ListUserReq 用户列表查询参数
 type ListUserReq struct {
-	Page     int    `form:"page,default=1" example:"1"`         // 页码 (从1开始)
-	PageSize int    `form:"page_size,default=20" example:"20"`  // 每页条数 (默认20, 最大100)
-	Username string `form:"username" example:"admin"`           // 用户名模糊过滤
-	RoleID   uint64 `form:"role_id" example:"1"`                // 角色ID过滤
-	IsActive *bool  `form:"is_active" example:"true"`           // 状态过滤 (true/false)
-	OrderBy  string `form:"order_by" example:"id desc"`         // 排序字段 (如 id desc, created_at asc)
+	Page     int    `form:"page,default=1" example:"1"`        // 页码 (从1开始)
+	PageSize int    `form:"page_size,default=20" example:"20"` // 每页条数 (默认20, 最大100)
+	Username string `form:"username" example:"admin"`          // 用户名模糊过滤
+	RoleID   uint64 `form:"role_id" example:"1"`               // 角色ID过滤
+	IsActive *bool  `form:"is_active" example:"true"`          // 状态过滤 (true/false)
+	OrderBy  string `form:"order_by" example:"id desc"`        // 排序字段 (如 id desc, created_at asc)
 }
 
 // ==================== 角色相关 DTO ====================
@@ -153,37 +153,37 @@ type MenuMetaReq struct {
 // CreateMenuReq 创建菜单请求
 type CreateMenuReq struct {
 	Name      string      `json:"name" binding:"required,min=2,max=64" example:"System"` // 菜单名称 (唯一标识)
-	Path      string      `json:"path" binding:"required" example:"/system"`              // 前端路由路径
-	Component string      `json:"component" example:"Layout"`                             // 前端组件路径
-	Meta      MenuMetaReq `json:"meta" binding:"required"`                                // 菜单元数据 (标题/图标)
-	Sort      uint32      `json:"sort" example:"1"`                                       // 排序号 (升序)
-	IsActive  *bool       `json:"is_active" example:"true"`                               // 是否启用 (默认启用)
-	Descr     string      `json:"descr" example:"系统基础配置管理"`                               // 描述说明
-	ParentID  *uint64     `json:"parent_id" example:"0"`                                  // 父级菜单ID (0或空为顶级菜单)
-	ApiIDs    []uint64    `json:"api_ids" example:"1,2"`                                  // 关联的接口ID列表
+	Path      string      `json:"path" binding:"required" example:"/system"`             // 前端路由路径
+	Component string      `json:"component" example:"Layout"`                            // 前端组件路径
+	Meta      MenuMetaReq `json:"meta" binding:"required"`                               // 菜单元数据 (标题/图标)
+	Sort      uint32      `json:"sort" example:"1"`                                      // 排序号 (升序)
+	IsActive  *bool       `json:"is_active" example:"true"`                              // 是否启用 (默认启用)
+	Descr     string      `json:"descr" example:"系统基础配置管理"`                              // 描述说明
+	ParentID  *uint64     `json:"parent_id" example:"0"`                                 // 父级菜单ID (0或空为顶级菜单)
+	ApiIDs    []uint64    `json:"api_ids" example:"1,2"`                                 // 关联的接口ID列表
 }
 
 // UpdateMenuReq 更新菜单请求
 type UpdateMenuReq struct {
 	Name      string      `json:"name" binding:"required,min=2,max=64" example:"System"` // 菜单名称 (唯一标识)
-	Path      string      `json:"path" binding:"required" example:"/system"`              // 前端路由路径
-	Component string      `json:"component" example:"Layout"`                             // 前端组件路径
-	Meta      MenuMetaReq `json:"meta" binding:"required"`                                // 菜单元数据
-	Sort      uint32      `json:"sort" example:"1"`                                       // 排序号
-	IsActive  *bool       `json:"is_active" example:"true"`                               // 是否启用
-	Descr     string      `json:"descr" example:"系统基础配置管理"`                               // 描述说明
-	ParentID  *uint64     `json:"parent_id" example:"0"`                                  // 父级菜单ID
-	ApiIDs    []uint64    `json:"api_ids" example:"1,2"`                                  // 关联的接口ID列表
+	Path      string      `json:"path" binding:"required" example:"/system"`             // 前端路由路径
+	Component string      `json:"component" example:"Layout"`                            // 前端组件路径
+	Meta      MenuMetaReq `json:"meta" binding:"required"`                               // 菜单元数据
+	Sort      uint32      `json:"sort" example:"1"`                                      // 排序号
+	IsActive  *bool       `json:"is_active" example:"true"`                              // 是否启用
+	Descr     string      `json:"descr" example:"系统基础配置管理"`                              // 描述说明
+	ParentID  *uint64     `json:"parent_id" example:"0"`                                 // 父级菜单ID
+	ApiIDs    []uint64    `json:"api_ids" example:"1,2"`                                 // 关联的接口ID列表
 }
 
 // ListMenuReq 菜单列表查询参数
 type ListMenuReq struct {
-	Page     int    `form:"page,default=1" example:"1"`         // 页码
-	PageSize int    `form:"page_size,default=20" example:"20"`  // 每页条数
-	Name     string `form:"name" example:"System"`              // 菜单名称过滤
-	Path     string `form:"path" example:"/system"`             // 路由路径过滤
-	IsActive *bool  `form:"is_active" example:"true"`           // 状态过滤
-	OrderBy  string `form:"order_by" example:"sort asc"`        // 排序规则
+	Page     int    `form:"page,default=1" example:"1"`        // 页码
+	PageSize int    `form:"page_size,default=20" example:"20"` // 每页条数
+	Name     string `form:"name" example:"System"`             // 菜单名称过滤
+	Path     string `form:"path" example:"/system"`            // 路由路径过滤
+	IsActive *bool  `form:"is_active" example:"true"`          // 状态过滤
+	OrderBy  string `form:"order_by" example:"sort asc"`       // 排序规则
 }
 
 // ==================== 按钮相关 DTO ====================
@@ -191,65 +191,65 @@ type ListMenuReq struct {
 // CreateButtonReq 创建按钮权限请求
 type CreateButtonReq struct {
 	Name     string   `json:"name" binding:"required,min=2,max=64" example:"user:add"` // 按钮标识 (唯一名称)
-	MenuID   uint64   `json:"menu_id" binding:"required" example:"1"`                   // 所属菜单ID
-	Sort     uint32   `json:"sort" example:"1"`                                         // 排序号
-	IsActive *bool    `json:"is_active" example:"true"`                                 // 是否启用
-	Descr    string   `json:"descr" example:"用户新增按钮"`                                   // 按钮描述
-	ApiIDs   []uint64 `json:"api_ids" example:"1,2"`                                    // 关联的接口ID列表
+	MenuID   uint64   `json:"menu_id" binding:"required" example:"1"`                  // 所属菜单ID
+	Sort     uint32   `json:"sort" example:"1"`                                        // 排序号
+	IsActive *bool    `json:"is_active" example:"true"`                                // 是否启用
+	Descr    string   `json:"descr" example:"用户新增按钮"`                                  // 按钮描述
+	ApiIDs   []uint64 `json:"api_ids" example:"1,2"`                                   // 关联的接口ID列表
 }
 
 // UpdateButtonReq 更新按钮权限请求
 type UpdateButtonReq struct {
 	Name     string   `json:"name" binding:"required,min=2,max=64" example:"user:add"` // 按钮标识
-	MenuID   uint64   `json:"menu_id" binding:"required" example:"1"`                   // 所属菜单ID
-	Sort     uint32   `json:"sort" example:"1"`                                         // 排序号
-	IsActive *bool    `json:"is_active" example:"true"`                                 // 是否启用
-	Descr    string   `json:"descr" example:"用户新增按钮"`                                   // 按钮描述
-	ApiIDs   []uint64 `json:"api_ids" example:"1,2"`                                    // 关联的接口ID列表
+	MenuID   uint64   `json:"menu_id" binding:"required" example:"1"`                  // 所属菜单ID
+	Sort     uint32   `json:"sort" example:"1"`                                        // 排序号
+	IsActive *bool    `json:"is_active" example:"true"`                                // 是否启用
+	Descr    string   `json:"descr" example:"用户新增按钮"`                                  // 按钮描述
+	ApiIDs   []uint64 `json:"api_ids" example:"1,2"`                                   // 关联的接口ID列表
 }
 
 // ListButtonReq 按钮列表查询参数
 type ListButtonReq struct {
-	Page     int    `form:"page,default=1" example:"1"`         // 页码
-	PageSize int    `form:"page_size,default=20" example:"20"`  // 每页条数
-	Name     string `form:"name" example:"user:add"`            // 按钮名称过滤
-	MenuID   uint64 `form:"menu_id" example:"1"`                // 所属菜单ID过滤
-	IsActive *bool  `form:"is_active" example:"true"`           // 状态过滤
-	OrderBy  string `form:"order_by" example:"sort asc"`        // 排序规则
+	Page     int    `form:"page,default=1" example:"1"`        // 页码
+	PageSize int    `form:"page_size,default=20" example:"20"` // 每页条数
+	Name     string `form:"name" example:"user:add"`           // 按钮名称过滤
+	MenuID   uint64 `form:"menu_id" example:"1"`               // 所属菜单ID过滤
+	IsActive *bool  `form:"is_active" example:"true"`          // 状态过滤
+	OrderBy  string `form:"order_by" example:"sort asc"`       // 排序规则
 }
 
 // ==================== API 接口相关 DTO ====================
 
 // CreateApiReq 创建 API 资源请求
 type CreateApiReq struct {
-	URL    string `json:"url" binding:"required" example:"/api/v1/users"`     // 路由 URL 匹配路径
-	Method string `json:"method" binding:"required" example:"GET"`             // HTTP 请求方法 (GET, POST, PUT, DELETE等)
-	Label  string `json:"label" example:"获取用户列表"`                             // 接口显示名称/标签
-	Descr  string `json:"descr" example:"分页获取系统用户列表"`                          // 接口功能说明
+	URL    string `json:"url" binding:"required" example:"/api/v1/users"` // 路由 URL 匹配路径
+	Method string `json:"method" binding:"required" example:"GET"`        // HTTP 请求方法 (GET, POST, PUT, DELETE等)
+	Label  string `json:"label" example:"获取用户列表"`                         // 接口显示名称/标签
+	Descr  string `json:"descr" example:"分页获取系统用户列表"`                     // 接口功能说明
 }
 
 // UpdateApiReq 更新 API 资源请求
 type UpdateApiReq struct {
-	URL    string `json:"url" binding:"required" example:"/api/v1/users"`     // 路由 URL 匹配路径
-	Method string `json:"method" binding:"required" example:"GET"`             // HTTP 请求方法
-	Label  string `json:"label" example:"获取用户列表"`                             // 接口显示名称
-	Descr  string `json:"descr" example:"分页获取系统用户列表"`                          // 接口功能说明
+	URL    string `json:"url" binding:"required" example:"/api/v1/users"` // 路由 URL 匹配路径
+	Method string `json:"method" binding:"required" example:"GET"`        // HTTP 请求方法
+	Label  string `json:"label" example:"获取用户列表"`                         // 接口显示名称
+	Descr  string `json:"descr" example:"分页获取系统用户列表"`                     // 接口功能说明
 }
 
 // ListApiReq API 列表查询参数
 type ListApiReq struct {
-	Page     int    `form:"page,default=1" example:"1"`         // 页码
-	PageSize int    `form:"page_size,default=20" example:"20"`  // 每页条数
-	URL      string `form:"url" example:"/api/v1/users"`        // URL路径过滤
-	Method   string `form:"method" example:"GET"`               // HTTP方法过滤
-	Label    string `form:"label" example:"用户"`                 // 接口标签模糊过滤
-	OrderBy  string `form:"order_by" example:"id desc"`         // 排序规则
+	Page     int    `form:"page,default=1" example:"1"`        // 页码
+	PageSize int    `form:"page_size,default=20" example:"20"` // 每页条数
+	URL      string `form:"url" example:"/api/v1/users"`       // URL路径过滤
+	Method   string `form:"method" example:"GET"`              // HTTP方法过滤
+	Label    string `form:"label" example:"用户"`                // 接口标签模糊过滤
+	OrderBy  string `form:"order_by" example:"id desc"`        // 排序规则
 }
 
 // SyncRouteItem 待同步路由条目
 type SyncRouteItem struct {
 	URL    string `json:"url" binding:"required" example:"/api/v1/users"` // 路由 URL
-	Method string `json:"method" binding:"required" example:"GET"`         // 请求方法
+	Method string `json:"method" binding:"required" example:"GET"`        // 请求方法
 	Label  string `json:"label" example:"用户管理"`                           // 接口名称
 	Descr  string `json:"descr" example:"获取用户列表"`                         // 接口描述
 }

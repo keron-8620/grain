@@ -21,17 +21,9 @@ type Button struct {
 	MenuID    uint64
 	Menu      *Menu
 	ApiIDs    []uint64
-	Apis      []*Api
+	Apis      []Api
 	CreatedAt time.Time
 	UpdatedAt time.Time
-}
-
-// ButtonListOptions defines the button list query conditions.
-type ButtonListOptions struct {
-	Offset   int
-	PageSize int
-	Filters  []db.ListFilter
-	OrderBy  string
 }
 
 // ButtonRepo is the button repository interface contract.
@@ -40,10 +32,10 @@ type ButtonRepo interface {
 	Update(ctx context.Context, button *Button) (*Button, error)
 	Delete(ctx context.Context, id uint64) error
 	FindByID(ctx context.Context, id uint64, preloads ...string) (*Button, error)
-	FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]*Button, error)
+	FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]Button, error)
 	FindByName(ctx context.Context, name string) (*Button, error)
-	List(ctx context.Context, opts ButtonListOptions) ([]*Button, int64, error)
-	ListAllWithApis(ctx context.Context) ([]*Button, error)
+	List(ctx context.Context, opts db.ListOptions) ([]Button, int64, error)
+	ListAllWithApis(ctx context.Context) ([]Button, error)
 
 	// Casbin grouping policies
 	AddGroupPolicy(ctx context.Context, button *Button) error
@@ -52,20 +44,20 @@ type ButtonRepo interface {
 
 // ButtonUseCase handles button resource management and grouping policy synchronization.
 type ButtonUseCase struct {
-	repo     ButtonRepo
-	menuRepo MenuRepo
-	logger   *slog.Logger
+	buttonRepo ButtonRepo
+	menuRepo   MenuRepo
+	logger     *slog.Logger
 }
 
 // NewButtonUseCase creates a new ButtonUseCase instance.
-func NewButtonUseCase(repo ButtonRepo, menuRepo MenuRepo, logger *slog.Logger) *ButtonUseCase {
+func NewButtonUseCase(buttonRepo ButtonRepo, menuRepo MenuRepo, logger *slog.Logger) *ButtonUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &ButtonUseCase{
-		repo:     repo,
-		menuRepo: menuRepo,
-		logger:   logger,
+		buttonRepo: buttonRepo,
+		menuRepo:   menuRepo,
+		logger:     logger,
 	}
 }
 
@@ -96,7 +88,7 @@ func (uc *ButtonUseCase) Create(ctx context.Context, button *Button) (*Button, e
 	}
 
 	// Verify button name uniqueness
-	existing, err := uc.repo.FindByName(ctx, button.Name)
+	existing, err := uc.buttonRepo.FindByName(ctx, button.Name)
 	if err != nil && !errorx.IsRecordNotFound(err) {
 		return nil, errorx.FromDBError(err)
 	}
@@ -104,7 +96,7 @@ func (uc *ButtonUseCase) Create(ctx context.Context, button *Button) (*Button, e
 		return nil, errorx.CodeDuplicatedKey.Error("按钮名称已存在")
 	}
 
-	created, err := uc.repo.Create(ctx, button)
+	created, err := uc.buttonRepo.Create(ctx, button)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -112,12 +104,12 @@ func (uc *ButtonUseCase) Create(ctx context.Context, button *Button) (*Button, e
 	rollback := func() {
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
-		if err := uc.repo.Delete(rbCtx, created.ID); err != nil {
+		if err := uc.buttonRepo.Delete(rbCtx, created.ID); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to roll back button model creation", slog.Uint64("button_id", created.ID), slog.Any("error", err))
 		}
 	}
 
-	if err := uc.repo.AddGroupPolicy(ctx, created); err != nil {
+	if err := uc.buttonRepo.AddGroupPolicy(ctx, created); err != nil {
 		uc.logger.ErrorContext(ctx, "failed to add casbin group policy for button", slog.Uint64("button_id", created.ID), slog.Any("error", err))
 		rollback()
 		return nil, errorx.Wrap(err, errorx.CodeSystemError, "添加按钮权限策略失败")
@@ -141,7 +133,7 @@ func (uc *ButtonUseCase) Update(ctx context.Context, button *Button) (*Button, e
 	}
 	button.Name = name
 
-	oldBtn, err := uc.repo.FindByID(ctx, button.ID, "Menu", "Apis")
+	oldBtn, err := uc.buttonRepo.FindByID(ctx, button.ID, "Menu", "Apis")
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -151,12 +143,12 @@ func (uc *ButtonUseCase) Update(ctx context.Context, button *Button) (*Button, e
 
 	// Ensure slice fields are non-nil so DB rollback can clear associations if they were originally empty
 	if oldBtn.Apis == nil {
-		oldBtn.Apis = []*Api{}
+		oldBtn.Apis = []Api{}
 	}
 
 	// Check name uniqueness if changed
 	if oldBtn.Name != button.Name {
-		existing, err := uc.repo.FindByName(ctx, button.Name)
+		existing, err := uc.buttonRepo.FindByName(ctx, button.Name)
 		if err != nil && !errorx.IsRecordNotFound(err) {
 			return nil, errorx.FromDBError(err)
 		}
@@ -176,7 +168,7 @@ func (uc *ButtonUseCase) Update(ctx context.Context, button *Button) (*Button, e
 		}
 	}
 
-	updated, err := uc.repo.Update(ctx, button)
+	updated, err := uc.buttonRepo.Update(ctx, button)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -185,25 +177,25 @@ func (uc *ButtonUseCase) Update(ctx context.Context, button *Button) (*Button, e
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		var errs []error
-		if _, err := uc.repo.Update(rbCtx, oldBtn); err != nil {
+		if _, err := uc.buttonRepo.Update(rbCtx, oldBtn); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to roll back button model update", slog.Uint64("button_id", button.ID), slog.Any("error", err))
 			errs = append(errs, err)
 		}
-		if err := uc.repo.RemoveGroupPolicy(rbCtx, updated, false); err != nil {
+		if err := uc.buttonRepo.RemoveGroupPolicy(rbCtx, updated, false); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to clean up updated button policy", slog.Uint64("button_id", button.ID), slog.Any("error", err))
 			errs = append(errs, err)
 		}
-		if err := uc.repo.AddGroupPolicy(rbCtx, oldBtn); err != nil {
+		if err := uc.buttonRepo.AddGroupPolicy(rbCtx, oldBtn); err != nil {
 			uc.logger.ErrorContext(ctx, "failed to restore button policy", slog.Uint64("button_id", button.ID), slog.Any("error", err))
 			errs = append(errs, err)
 		}
 		return errors.Join(errs...)
 	}
 
-	if err := uc.repo.RemoveGroupPolicy(ctx, oldBtn, false); err != nil {
+	if err := uc.buttonRepo.RemoveGroupPolicy(ctx, oldBtn, false); err != nil {
 		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "删除旧按钮权限策略失败")
 	}
-	if err := uc.repo.AddGroupPolicy(ctx, updated); err != nil {
+	if err := uc.buttonRepo.AddGroupPolicy(ctx, updated); err != nil {
 		uc.logger.ErrorContext(ctx, "failed to update casbin group policy for button", slog.Uint64("button_id", button.ID), slog.Any("error", err))
 		return nil, errorx.Wrap(errors.Join(err, rollback()), errorx.CodeSystemError, "更新按钮权限策略失败")
 	}
@@ -217,7 +209,7 @@ func (uc *ButtonUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeInvalidParam.Error("无效的按钮ID")
 	}
 
-	btn, err := uc.repo.FindByID(ctx, id, "Apis")
+	btn, err := uc.buttonRepo.FindByID(ctx, id, "Apis")
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
@@ -227,14 +219,14 @@ func (uc *ButtonUseCase) Delete(ctx context.Context, id uint64) error {
 
 	cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if err := uc.repo.RemoveGroupPolicy(cleanCtx, btn, false); err != nil {
+	if err := uc.buttonRepo.RemoveGroupPolicy(cleanCtx, btn, false); err != nil {
 		return errorx.Wrap(err, errorx.CodeSystemError, "删除按钮权限策略失败")
 	}
-	if err := uc.repo.Delete(ctx, id); err != nil {
-		restoreErr := uc.repo.AddGroupPolicy(cleanCtx, btn)
+	if err := uc.buttonRepo.Delete(ctx, id); err != nil {
+		restoreErr := uc.buttonRepo.AddGroupPolicy(cleanCtx, btn)
 		return errorx.Wrap(errors.Join(errorx.FromDBError(err), restoreErr), errorx.CodeSystemError, "删除按钮失败")
 	}
-	if err := uc.repo.RemoveGroupPolicy(cleanCtx, btn, true); err != nil {
+	if err := uc.buttonRepo.RemoveGroupPolicy(cleanCtx, btn, true); err != nil {
 		return errorx.Wrap(err, errorx.CodeSystemError, "清理按钮关联权限策略失败")
 	}
 
@@ -247,7 +239,7 @@ func (uc *ButtonUseCase) Get(ctx context.Context, id uint64) (*Button, error) {
 		return nil, errorx.CodeInvalidParam.Error("无效的按钮ID")
 	}
 
-	btn, err := uc.repo.FindByID(ctx, id, "Menu", "Apis")
+	btn, err := uc.buttonRepo.FindByID(ctx, id, "Menu", "Apis")
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -265,7 +257,7 @@ func (uc *ButtonUseCase) GetByName(ctx context.Context, name string) (*Button, e
 		return nil, errorx.CodeMissingParam.Error("按钮名称不能为空")
 	}
 
-	btn, err := uc.repo.FindByName(ctx, cleanName)
+	btn, err := uc.buttonRepo.FindByName(ctx, cleanName)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -277,8 +269,8 @@ func (uc *ButtonUseCase) GetByName(ctx context.Context, name string) (*Button, e
 }
 
 // List lists buttons matching conditions.
-func (uc *ButtonUseCase) List(ctx context.Context, opts ButtonListOptions) ([]*Button, int64, error) {
-	btns, total, err := uc.repo.List(ctx, opts)
+func (uc *ButtonUseCase) List(ctx context.Context, opts db.ListOptions) ([]Button, int64, error) {
+	btns, total, err := uc.buttonRepo.List(ctx, opts)
 	if err != nil {
 		return nil, 0, errorx.FromDBError(err)
 	}
@@ -286,8 +278,8 @@ func (uc *ButtonUseCase) List(ctx context.Context, opts ButtonListOptions) ([]*B
 }
 
 // ListAllWithApis lists all buttons preloaded with associated APIs.
-func (uc *ButtonUseCase) ListAllWithApis(ctx context.Context) ([]*Button, error) {
-	btns, err := uc.repo.ListAllWithApis(ctx)
+func (uc *ButtonUseCase) ListAllWithApis(ctx context.Context) ([]Button, error) {
+	btns, err := uc.buttonRepo.ListAllWithApis(ctx)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}

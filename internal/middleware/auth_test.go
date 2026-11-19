@@ -310,7 +310,8 @@ p, iam:role:1, /api/v1/users, POST
 		r.Use(func(c *gin.Context) {
 			// Simulate claims injection from JWT middleware
 			roleStr := c.GetHeader("X-Test-Role")
-			if roleStr == "1" {
+			switch roleStr {
+			case "1":
 				claims := &auth.JwtClaims{
 					UserInfo: auth.UserInfo{
 						UserID:   1,
@@ -319,7 +320,7 @@ p, iam:role:1, /api/v1/users, POST
 					},
 				}
 				c.Request = c.Request.WithContext(auth.SetJwtClaims(c.Request.Context(), claims))
-			} else if roleStr == "2" {
+			case "2":
 				claims := &auth.JwtClaims{
 					UserInfo: auth.UserInfo{
 						UserID:   2,

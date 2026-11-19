@@ -79,7 +79,9 @@ func TestJWKSRefresher_FetchNow_And_BackgroundRefresh(t *testing.T) {
 		Cooldown:   10 * time.Millisecond,
 	})
 	require.NoError(t, err)
-	defer refresher.Close()
+	defer func() {
+		_ = refresher.Close()
+	}()
 
 	// Initial manual fetch
 	ctx := context.Background()
@@ -137,7 +139,9 @@ func TestJWKSRefresher_OnDemandRefresh_UnknownKid(t *testing.T) {
 		Cooldown:   300 * time.Millisecond,
 	})
 	require.NoError(t, err)
-	defer refresher.Close()
+	defer func() {
+		_ = refresher.Close()
+	}()
 
 	// Update server to have key2 (newly rotated key)
 	currentJWKS.Store(&JSONWebKeySet{Keys: []JSONWebKey{*jwk2, *jwk1}})
@@ -216,7 +220,9 @@ func TestJWKSRefresher_ConcurrentOnDemand(t *testing.T) {
 		Cooldown:   500 * time.Millisecond,
 	})
 	require.NoError(t, err)
-	defer refresher.Close()
+	defer func() {
+		_ = refresher.Close()
+	}()
 
 	claims := &JwtClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -317,7 +323,9 @@ func TestJWKSRefresher_BadSignatureOnKnownKey_DoesNotTriggerRefresh(t *testing.T
 		Cooldown:   10 * time.Second,
 	})
 	require.NoError(t, err)
-	defer refresher.Close()
+	defer func() {
+		_ = refresher.Close()
+	}()
 
 	claims := &JwtClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -386,7 +394,9 @@ func TestJWKSRefresher_LegacyTokenWithoutKid_TriggersRefresh(t *testing.T) {
 		Cooldown:   10 * time.Second,
 	})
 	require.NoError(t, err)
-	defer refresher.Close()
+	defer func() {
+		_ = refresher.Close()
+	}()
 
 	claims := &JwtClaims{
 		RegisteredClaims: jwt.RegisteredClaims{

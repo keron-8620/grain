@@ -183,14 +183,17 @@ func New(opts Options) (*Server, error) {
 	if opts.Bootstrap.Security == nil {
 		opts.Bootstrap.Security = &conf.SecurityConfig{}
 	}
+	if opts.Bootstrap.IAM == nil {
+		opts.Bootstrap.IAM = &conf.IAMConfig{}
+	}
 	if opts.Issuer == "" {
-		opts.Issuer = opts.Bootstrap.Security.Token.Issuer
+		opts.Issuer = opts.Bootstrap.IAM.Token.Issuer
 	}
 	if opts.Issuer == "" {
 		opts.Issuer = "iam.grain.com"
 	}
 	if opts.Audience == "" {
-		opts.Audience = opts.Bootstrap.Security.Token.Audience
+		opts.Audience = opts.Bootstrap.IAM.Token.Audience
 	}
 	if opts.Audience == "" {
 		opts.Audience = "grain-api"
@@ -241,16 +244,16 @@ func New(opts Options) (*Server, error) {
 		ListSlow:  slow,
 	}
 
-	accessDuration := opts.Bootstrap.Security.Token.AccessDuration
+	accessDuration := opts.Bootstrap.IAM.Token.AccessDuration
 	if accessDuration <= 0 {
 		accessDuration = 2 * time.Hour
 	}
-	refreshDuration := opts.Bootstrap.Security.Token.RefreshDuration
+	refreshDuration := opts.Bootstrap.IAM.Token.RefreshDuration
 	if refreshDuration <= 0 {
 		refreshDuration = 7 * 24 * time.Hour
 	}
 
-	method, err := conf.SigningMethod(opts.Bootstrap.Security.Token.AccessMethod)
+	method, err := conf.SigningMethod(opts.Bootstrap.IAM.Token.AccessMethod)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +298,7 @@ func New(opts Options) (*Server, error) {
 
 	// 7. 初始化业务层 UseCase 与 Biz 聚合
 	passwordPolicy := biziam.PasswordPolicy{
-		StrengthLevel: opts.Bootstrap.Security.Password.StrengthLevel,
+		StrengthLevel: opts.Bootstrap.IAM.Password.StrengthLevel,
 	}
 	if err := passwordPolicy.ValidateLevel(); err != nil {
 		return nil, fmt.Errorf("iam server: %w", err)
@@ -307,8 +310,8 @@ func New(opts Options) (*Server, error) {
 	apiUC := biziam.NewApiUseCase(apiRepo, opts.Logger)
 	authUC := biziam.NewAuthUseCaseWithConfig(userRepo, roleRepo, tokenMgr, opts.Logger, biziam.AuthUseCaseConfig{
 		RefreshTTL:        refreshDuration,
-		MaxFailedAttempts: opts.Bootstrap.Security.Login.MaxFailedAttempts,
-		LockDuration:      opts.Bootstrap.Security.Login.LockDuration,
+		MaxFailedAttempts: opts.Bootstrap.IAM.Login.MaxFailedAttempts,
+		LockDuration:      opts.Bootstrap.IAM.Login.LockDuration,
 	})
 	biz := biziam.NewBiz(userUC, roleUC, menuUC, buttonUC, apiUC, authUC)
 

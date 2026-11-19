@@ -220,10 +220,6 @@ func TestRegisterError(t *testing.T) {
 }
 
 func TestDbMappedError_As(t *testing.T) {
-	type customErrType struct {
-		code int
-	}
-
 	customErr := &customErrStruct{code: 42}
 	mapped := wrapMapped(ErrInvalidData, customErr)
 

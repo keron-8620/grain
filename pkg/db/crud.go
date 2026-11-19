@@ -645,10 +645,12 @@ func validateSQLIdentifier(ident string) error {
 		}
 		for i, r := range seg {
 			if i == 0 {
+				//nolint:staticcheck // QF1001
 				if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_') {
 					return errors.New("identifier segment must start with a letter or underscore")
 				}
 			} else {
+				//nolint:staticcheck // QF1001
 				if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
 					return fmt.Errorf("identifier contains invalid character %q", r)
 				}

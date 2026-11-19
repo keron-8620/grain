@@ -17,12 +17,22 @@ type User struct {
 	Username     string
 	Password     string
 	IsActive     bool
-	IsActiveSet  bool
 	RoleID       uint64
 	Role         *Role
 	TokenVersion uint64
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// UserUpdate describes a partial user profile update.
+// A nil IsActive means the account status is left unchanged; otherwise the provided
+// value is applied. This keeps patch semantics out of the User entity itself.
+type UserUpdate struct {
+	ID       uint64
+	Username string
+	Password string
+	RoleID   uint64
+	IsActive *bool
 }
 
 // Sanitize clears sensitive credential fields (such as the password hash) to avoid leaking them to upper layers
@@ -33,14 +43,6 @@ func (u *User) Sanitize() *User {
 	return u
 }
 
-// UserListOptions are the user list query options
-type UserListOptions struct {
-	Offset   int
-	PageSize int
-	Filters  []db.ListFilter
-	OrderBy  string
-}
-
 // UserRepo is the user repo interface contract
 type UserRepo interface {
 	Create(ctx context.Context, user *User) (*User, error)
@@ -48,7 +50,10 @@ type UserRepo interface {
 	Delete(ctx context.Context, id uint64) error
 	FindByID(ctx context.Context, id uint64, preloads ...string) (*User, error)
 	FindByUsername(ctx context.Context, username string, preloads ...string) (*User, error)
-	List(ctx context.Context, opts UserListOptions) ([]*User, int64, error)
+	// UsernameExists reports whether the username is taken, including by soft-deleted users.
+	// Deleted usernames are never reusable.
+	UsernameExists(ctx context.Context, username string) (bool, error)
+	List(ctx context.Context, opts db.ListOptions) ([]User, int64, error)
 	ListIDsByRole(ctx context.Context, roleID uint64) ([]uint64, error)
 
 	// Token version and session revocation
@@ -76,7 +81,7 @@ const (
 
 // UserUseCase handles user management, password lifecycle, and account session controls.
 type UserUseCase struct {
-	repo           UserRepo
+	userRepo       UserRepo
 	roleRepo       RoleRepo
 	logger         *slog.Logger
 	hasher         *cryptoutil.BcryptHasher
@@ -86,7 +91,7 @@ type UserUseCase struct {
 
 // NewUserUseCase creates a new UserUseCase instance.
 // An optional PasswordPolicy controls password strength requirements.
-func NewUserUseCase(repo UserRepo, roleRepo RoleRepo, logger *slog.Logger, policies ...PasswordPolicy) *UserUseCase {
+func NewUserUseCase(userRepo UserRepo, roleRepo RoleRepo, logger *slog.Logger, policies ...PasswordPolicy) *UserUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -95,7 +100,7 @@ func NewUserUseCase(repo UserRepo, roleRepo RoleRepo, logger *slog.Logger, polic
 		policy = policies[0]
 	}
 	return &UserUseCase{
-		repo:           repo,
+		userRepo:       userRepo,
 		roleRepo:       roleRepo,
 		logger:         logger,
 		hasher:         cryptoutil.NewBcryptHasher(0),
@@ -137,12 +142,12 @@ func (uc *UserUseCase) Create(ctx context.Context, user *User, rawPassword strin
 		}
 	}
 
-	// Verify username uniqueness
-	existing, err := uc.repo.FindByUsername(ctx, user.Username)
-	if err != nil && !errorx.IsRecordNotFound(err) {
+	// Verify username uniqueness. Soft-deleted users reserve their username permanently.
+	exists, err := uc.userRepo.UsernameExists(ctx, user.Username)
+	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
-	if existing != nil {
+	if exists {
 		return nil, errorx.CodeDuplicatedKey.Error("用户名已存在")
 	}
 
@@ -153,25 +158,26 @@ func (uc *UserUseCase) Create(ctx context.Context, user *User, rawPassword strin
 	}
 	user.Password = hashedPassword
 
-	created, err := uc.repo.Create(ctx, user)
+	created, err := uc.userRepo.Create(ctx, user)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
 
 	// Initialize token version cache
-	_ = uc.repo.EnsureTokenVersionCache(ctx, created.ID, created.TokenVersion)
+	_ = uc.userRepo.EnsureTokenVersionCache(ctx, created.ID, created.TokenVersion)
 
 	ret := *created
 	return ret.Sanitize(), nil
 }
 
-// Update updates an existing user, checks role validity, and revokes sessions if privileges or status change.
-func (uc *UserUseCase) Update(ctx context.Context, user *User) (*User, error) {
-	if user == nil || user.ID == 0 {
+// Update updates an existing user profile, checks role validity, and revokes sessions
+// if privileges, status, or credentials change. A nil IsActive leaves the status untouched.
+func (uc *UserUseCase) Update(ctx context.Context, in UserUpdate) (*User, error) {
+	if in.ID == 0 {
 		return nil, errorx.CodeInvalidParam.Error("无效的用户ID")
 	}
 
-	oldUser, err := uc.repo.FindByID(ctx, user.ID)
+	oldUser, err := uc.userRepo.FindByID(ctx, in.ID)
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -179,63 +185,70 @@ func (uc *UserUseCase) Update(ctx context.Context, user *User) (*User, error) {
 		return nil, errorx.CodeRecordNotFound.Error("用户不存在")
 	}
 
-	username := strings.TrimSpace(user.Username)
+	username := strings.TrimSpace(in.Username)
 	if username != "" && username != oldUser.Username {
-		existing, err := uc.repo.FindByUsername(ctx, username)
-		if err != nil && !errorx.IsRecordNotFound(err) {
+		// UsernameExists includes soft-deleted users, so deleted names stay reserved.
+		exists, err := uc.userRepo.UsernameExists(ctx, username)
+		if err != nil {
 			return nil, errorx.FromDBError(err)
 		}
-		if existing != nil && existing.ID != user.ID {
+		if exists {
 			return nil, errorx.CodeDuplicatedKey.Error("用户名已被使用")
 		}
 	}
 	if username == "" {
-		user.Username = oldUser.Username
-	} else {
-		user.Username = username
+		username = oldUser.Username
 	}
 
-	if user.RoleID > 0 && user.RoleID != oldUser.RoleID && uc.roleRepo != nil {
-		role, err := uc.roleRepo.FindByID(ctx, user.RoleID)
+	roleID := oldUser.RoleID
+	if in.RoleID > 0 && in.RoleID != oldUser.RoleID && uc.roleRepo != nil {
+		role, err := uc.roleRepo.FindByID(ctx, in.RoleID)
 		if err != nil {
 			return nil, errorx.FromDBError(err)
 		}
 		if role == nil {
 			return nil, errorx.CodeRecordNotFound.Error("指定角色不存在")
 		}
-	} else {
-		user.RoleID = oldUser.RoleID
+		roleID = in.RoleID
 	}
 
-	if !user.IsActiveSet && (username != "" || user.RoleID > 0 || user.Password != "") {
-		user.IsActive = oldUser.IsActive
+	isActive := oldUser.IsActive
+	if in.IsActive != nil {
+		isActive = *in.IsActive
 	}
 
-	passwordChanged := user.Password != ""
+	passwordChanged := in.Password != ""
+	hashedPassword := ""
 	if passwordChanged {
-		if err := uc.passwordPolicy.Validate(user.Password); err != nil {
+		if err := uc.passwordPolicy.Validate(in.Password); err != nil {
 			return nil, err
 		}
-		hashed, err := uc.hasher.HashString(user.Password)
+		hashed, err := uc.hasher.HashString(in.Password)
 		if err != nil {
 			return nil, errorx.Wrap(err, errorx.CodeSystemError, "密码加密处理失败")
 		}
-		user.Password = hashed
+		hashedPassword = hashed
 	}
 
-	updated, err := uc.repo.Update(ctx, user)
+	updated, err := uc.userRepo.Update(ctx, &User{
+		ID:       in.ID,
+		Username: username,
+		Password: hashedPassword,
+		RoleID:   roleID,
+		IsActive: isActive,
+	})
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
 
-	if user.RoleID != oldUser.RoleID || (oldUser.IsActive && !user.IsActive) || passwordChanged {
-		if revErr := uc.repo.IncrementTokenVersion(ctx, user.ID); revErr != nil {
-			uc.logger.ErrorContext(ctx, "failed to revoke user sessions on profile update", slog.Uint64("user_id", user.ID), slog.Any("error", revErr))
+	if roleID != oldUser.RoleID || (oldUser.IsActive && !isActive) || passwordChanged {
+		if revErr := uc.userRepo.IncrementTokenVersion(ctx, in.ID); revErr != nil {
+			uc.logger.ErrorContext(ctx, "failed to revoke user sessions on profile update", slog.Uint64("user_id", in.ID), slog.Any("error", revErr))
 			return nil, errorx.FromDBError(revErr)
 		}
 	}
 	if passwordChanged {
-		uc.clearLoginFailures(ctx, user.Username)
+		uc.clearLoginFailures(ctx, username)
 	}
 
 	ret := *updated
@@ -246,18 +259,19 @@ func (uc *UserUseCase) clearLoginFailures(ctx context.Context, username string) 
 	if username == "" {
 		return
 	}
-	if err := uc.repo.ClearLoginFailures(ctx, username); err != nil {
+	if err := uc.userRepo.ClearLoginFailures(ctx, username); err != nil {
 		uc.logger.WarnContext(ctx, "failed to clear login failure counter", slog.String("username", username), slog.Any("error", err))
 	}
 }
 
-// Delete deletes a user by ID.
+// Delete soft-deletes a user by ID. Revoking the token version first invalidates
+// outstanding refresh tokens; soft-deleted rows also disappear from all lookups.
 func (uc *UserUseCase) Delete(ctx context.Context, id uint64) error {
 	if id == 0 {
 		return errorx.CodeInvalidParam.Error("无效的用户ID")
 	}
 
-	user, err := uc.repo.FindByID(ctx, id)
+	user, err := uc.userRepo.FindByID(ctx, id)
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
@@ -265,7 +279,12 @@ func (uc *UserUseCase) Delete(ctx context.Context, id uint64) error {
 		return errorx.CodeRecordNotFound.Error("用户不存在")
 	}
 
-	if err := uc.repo.Delete(ctx, id); err != nil {
+	// Must run before the soft delete: GORM filters deleted_at on updates, so the
+	// token version can no longer be incremented afterwards.
+	if err := uc.userRepo.IncrementTokenVersion(ctx, id); err != nil {
+		return errorx.FromDBError(err)
+	}
+	if err := uc.userRepo.Delete(ctx, id); err != nil {
 		return errorx.FromDBError(err)
 	}
 
@@ -278,7 +297,7 @@ func (uc *UserUseCase) Get(ctx context.Context, id uint64) (*User, error) {
 		return nil, errorx.CodeInvalidParam.Error("无效的用户ID")
 	}
 
-	user, err := uc.repo.FindByID(ctx, id, "Role")
+	user, err := uc.userRepo.FindByID(ctx, id, "Role")
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -297,7 +316,7 @@ func (uc *UserUseCase) GetByUsername(ctx context.Context, username string) (*Use
 		return nil, errorx.CodeMissingParam.Error("用户名不能为空")
 	}
 
-	user, err := uc.repo.FindByUsername(ctx, cleanName, "Role")
+	user, err := uc.userRepo.FindByUsername(ctx, cleanName, "Role")
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
@@ -310,17 +329,14 @@ func (uc *UserUseCase) GetByUsername(ctx context.Context, username string) (*Use
 }
 
 // List lists users with conditions and returns sanitized results.
-func (uc *UserUseCase) List(ctx context.Context, opts UserListOptions) ([]*User, int64, error) {
-	users, total, err := uc.repo.List(ctx, opts)
+func (uc *UserUseCase) List(ctx context.Context, opts db.ListOptions) ([]User, int64, error) {
+	users, total, err := uc.userRepo.List(ctx, opts)
 	if err != nil {
 		return nil, 0, errorx.FromDBError(err)
 	}
-	res := make([]*User, len(users))
+	res := make([]User, len(users))
 	for i, u := range users {
-		if u != nil {
-			cp := *u
-			res[i] = cp.Sanitize()
-		}
+		res[i] = *u.Sanitize()
 	}
 	return res, total, nil
 }
@@ -337,7 +353,7 @@ func (uc *UserUseCase) ChangePassword(ctx context.Context, userID uint64, oldPas
 		return err
 	}
 
-	user, err := uc.repo.FindByID(ctx, userID)
+	user, err := uc.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
@@ -362,11 +378,11 @@ func (uc *UserUseCase) ChangePassword(ctx context.Context, userID uint64, oldPas
 		RoleID:   user.RoleID,
 		IsActive: user.IsActive,
 	}
-	if _, err := uc.repo.Update(ctx, updateDo); err != nil {
+	if _, err := uc.userRepo.Update(ctx, updateDo); err != nil {
 		return errorx.FromDBError(err)
 	}
 
-	if revErr := uc.repo.IncrementTokenVersion(ctx, userID); revErr != nil {
+	if revErr := uc.userRepo.IncrementTokenVersion(ctx, userID); revErr != nil {
 		return errorx.FromDBError(revErr)
 	}
 	uc.clearLoginFailures(ctx, user.Username)
@@ -382,7 +398,7 @@ func (uc *UserUseCase) ResetPassword(ctx context.Context, userID uint64, newPass
 		return err
 	}
 
-	user, err := uc.repo.FindByID(ctx, userID)
+	user, err := uc.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
@@ -402,11 +418,11 @@ func (uc *UserUseCase) ResetPassword(ctx context.Context, userID uint64, newPass
 		RoleID:   user.RoleID,
 		IsActive: user.IsActive,
 	}
-	if _, err := uc.repo.Update(ctx, updateDo); err != nil {
+	if _, err := uc.userRepo.Update(ctx, updateDo); err != nil {
 		return errorx.FromDBError(err)
 	}
 
-	if revErr := uc.repo.IncrementTokenVersion(ctx, userID); revErr != nil {
+	if revErr := uc.userRepo.IncrementTokenVersion(ctx, userID); revErr != nil {
 		return errorx.FromDBError(revErr)
 	}
 	uc.clearLoginFailures(ctx, user.Username)
@@ -420,7 +436,7 @@ func (uc *UserUseCase) UpdateStatus(ctx context.Context, userID uint64, isActive
 		return errorx.CodeInvalidParam.Error("无效的用户ID")
 	}
 
-	user, err := uc.repo.FindByID(ctx, userID)
+	user, err := uc.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
@@ -438,12 +454,12 @@ func (uc *UserUseCase) UpdateStatus(ctx context.Context, userID uint64, isActive
 		RoleID:   user.RoleID,
 		IsActive: isActive,
 	}
-	if _, err := uc.repo.Update(ctx, updateDo); err != nil {
+	if _, err := uc.userRepo.Update(ctx, updateDo); err != nil {
 		return errorx.FromDBError(err)
 	}
 
 	if !isActive {
-		if revErr := uc.repo.IncrementTokenVersion(ctx, userID); revErr != nil {
+		if revErr := uc.userRepo.IncrementTokenVersion(ctx, userID); revErr != nil {
 			return errorx.FromDBError(revErr)
 		}
 	} else {
@@ -458,7 +474,7 @@ func (uc *UserUseCase) RevokeUserSessions(ctx context.Context, userID uint64) er
 	if userID == 0 {
 		return errorx.CodeInvalidParam.Error("无效的用户ID")
 	}
-	if err := uc.repo.IncrementTokenVersion(ctx, userID); err != nil {
+	if err := uc.userRepo.IncrementTokenVersion(ctx, userID); err != nil {
 		return errorx.FromDBError(err)
 	}
 	return nil
@@ -469,12 +485,12 @@ func (uc *UserUseCase) RevokeRoleSessions(ctx context.Context, roleID uint64) er
 	if roleID == 0 {
 		return errorx.CodeInvalidParam.Error("无效的角色ID")
 	}
-	userIDs, err := uc.repo.ListIDsByRole(ctx, roleID)
+	userIDs, err := uc.userRepo.ListIDsByRole(ctx, roleID)
 	if err != nil {
 		return errorx.FromDBError(err)
 	}
 	if len(userIDs) > 0 {
-		if err := uc.repo.IncrementTokenVersionBatch(ctx, userIDs); err != nil {
+		if err := uc.userRepo.IncrementTokenVersionBatch(ctx, userIDs); err != nil {
 			return errorx.FromDBError(err)
 		}
 	}

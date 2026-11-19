@@ -80,18 +80,13 @@ func (s *Service) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	userDO := &biz.User{
+	updated, err := s.biz.User.Update(c.Request.Context(), biz.UserUpdate{
 		ID:       id,
 		Username: req.Username,
-		RoleID:   req.RoleID,
 		Password: req.Password,
-	}
-	if req.IsActive != nil {
-		userDO.IsActive = *req.IsActive
-		userDO.IsActiveSet = true
-	}
-
-	updated, err := s.biz.User.Update(c.Request.Context(), userDO)
+		RoleID:   req.RoleID,
+		IsActive: req.IsActive,
+	})
 	if err != nil {
 		Failure(c, err)
 		return
@@ -102,7 +97,7 @@ func (s *Service) UpdateUser(c *gin.Context) {
 
 // DeleteUser 删除系统用户
 // @Summary 删除系统用户
-// @Description 根据主键彻底删除系统用户账号
+// @Description 根据主键软删除系统用户账号，已删除用户的用户名不可复用
 // @Tags IAM/用户管理
 // @Security BearerAuth
 // @Produce json
@@ -209,7 +204,7 @@ func (s *Service) ListUsers(c *gin.Context) {
 		})
 	}
 
-	users, total, err := s.biz.User.List(c.Request.Context(), biz.UserListOptions{
+	users, total, err := s.biz.User.List(c.Request.Context(), db.ListOptions{
 		Offset:   offset,
 		PageSize: limit,
 		Filters:  filters,

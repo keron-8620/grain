@@ -21,9 +21,6 @@ var (
 	apiFilterColumns = map[string]string{
 		"id": "id", "url": "url", "method": "method", "label": "label", "descr": "descr",
 	}
-	recordFilterColumns = map[string]string{
-		"id": "id", "username": "username", "ip_address": "ip_address", "status": "status", "user_agent": "user_agent",
-	}
 )
 
 var (
@@ -32,5 +29,4 @@ var (
 	menuOrderColumns   = db.NewColumnSet("id", "path", "component", "name", "sort", "is_active", "parent_id", "created_at", "updated_at")
 	buttonOrderColumns = db.NewColumnSet("id", "name", "sort", "is_active", "menu_id", "created_at", "updated_at")
 	apiOrderColumns    = db.NewColumnSet("id", "url", "method", "label", "created_at", "updated_at")
-	recordOrderColumns = db.NewColumnSet("id", "username", "login_at", "ip_address", "status")
 )

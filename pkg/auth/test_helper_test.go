@@ -223,9 +223,9 @@ func (m *mockRedisServer) handle(conn net.Conn) {
 			}
 			m.mu.Unlock()
 			var buf strings.Builder
-			buf.WriteString(fmt.Sprintf("*%d\r\n", len(members)))
+			fmt.Fprintf(&buf, "*%d\r\n", len(members))
 			for _, mem := range members {
-				buf.WriteString(fmt.Sprintf("$%d\r\n%s\r\n", len(mem), mem))
+				fmt.Fprintf(&buf, "$%d\r\n%s\r\n", len(mem), mem)
 			}
 			_, _ = conn.Write([]byte(buf.String()))
 		case "SUBSCRIBE":

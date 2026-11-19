@@ -70,26 +70,15 @@ func (m *apiPO) ToUpdateMap() map[string]any {
 	}
 }
 
-func listApiPOToUint64s(ms []apiPO) []uint64 {
-	if len(ms) == 0 {
-		return []uint64{}
-	}
-	ids := make([]uint64, len(ms))
-	for i, m := range ms {
-		ids[i] = m.ID
-	}
-	return ids
-}
-
 // ==================== User persistent model ====================
 
 type userPO struct {
-	db.StandardModel
-	Username string `gorm:"column:username;type:varchar(50);not null;uniqueIndex;comment:username" json:"username"`
-	Password string `gorm:"column:password;type:varchar(150);not null;comment:password" json:"-"`
-	IsActive bool   `gorm:"column:is_active;type:boolean;comment:is active" json:"is_active"`
-	RoleID   uint64 `gorm:"column:role_id;not null;index:idx_user_role;comment:role ID" json:"role_id"`
-	Role     rolePO `gorm:"foreignKey:RoleID;references:ID;constraint:OnDelete:RESTRICT" json:"role"`
+	db.SoftDeleteModel
+	Username string  `gorm:"column:username;type:varchar(50);not null;uniqueIndex;comment:username" json:"username"`
+	Password string  `gorm:"column:password;type:varchar(150);not null;comment:password" json:"-"`
+	IsActive bool    `gorm:"column:is_active;type:boolean;comment:is active" json:"is_active"`
+	RoleID   uint64  `gorm:"column:role_id;not null;index:idx_user_role;comment:role ID" json:"role_id"`
+	Role     *rolePO `gorm:"foreignKey:RoleID;references:ID;constraint:OnDelete:RESTRICT" json:"role,omitempty"`
 	// TokenVersion is the authoritative database copy of the token version (session revocation counter).
 	// The version key in Redis is a hot cache; when the cache is lost, this value is the source of truth to prevent revoked tokens from coming back to life.
 	TokenVersion uint64 `gorm:"column:token_version;not null;default:0;comment:token version (session revocation counter)" json:"-"`
@@ -304,7 +293,7 @@ type buttonPO struct {
 	IsActive bool    `gorm:"column:is_active;type:boolean;comment:is active" json:"is_active"`
 	Descr    string  `gorm:"column:descr;type:varchar(254);comment:description" json:"descr"`
 	MenuID   uint64  `gorm:"column:menu_id;not null;index:idx_button_menu;comment:menu ID" json:"menu_id"`
-	Menu     menuPO  `gorm:"foreignKey:MenuID;references:ID;constraint:OnDelete:CASCADE" json:"menu"`
+	Menu     *menuPO `gorm:"foreignKey:MenuID;references:ID;constraint:OnDelete:CASCADE" json:"menu,omitempty"`
 	Apis     []apiPO `gorm:"many2many:iam_button_api;joinForeignKey:button_id;joinReferences:api_id;constraint:OnDelete:CASCADE"`
 }
 

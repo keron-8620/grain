@@ -141,7 +141,7 @@ func (l *SlogLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql 
 	switch {
 	case err != nil &&
 		l.Config.LogLevel >= gormlogger.Error &&
-		(!l.Config.IgnoreRecordNotFoundError || !(errors.Is(err, ErrRecordNotFound) || errors.Is(err, gorm.ErrRecordNotFound))):
+		(!l.Config.IgnoreRecordNotFoundError || (!errors.Is(err, ErrRecordNotFound) && !errors.Is(err, gorm.ErrRecordNotFound))):
 
 		if !logger.Enabled(ctx, slog.LevelError) {
 			return
@@ -246,7 +246,7 @@ func resolveCaller() (runtime.Frame, string) {
 		frame, more := frames.Next()
 		file := frame.File
 		if !strings.Contains(file, "gorm.io/") &&
-			!(strings.Contains(file, "pkg/db/") && !strings.HasSuffix(file, "_test.go")) {
+			(!strings.Contains(file, "pkg/db/") || strings.HasSuffix(file, "_test.go")) {
 			return frame, fmt.Sprintf("%s:%d", frame.File, frame.Line)
 		}
 		if !more {

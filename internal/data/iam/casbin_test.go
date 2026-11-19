@@ -15,7 +15,8 @@ func TestCasbin_Validation(t *testing.T) {
 		err := AddPolicies(ctx, nil, [][]string{{"p", "/a", "GET"}})
 		require.Error(t, err)
 
-		err = AddPolicies(nil, enf, [][]string{{"p", "/a", "GET"}})
+		var nilCtx context.Context
+		err = AddPolicies(nilCtx, enf, [][]string{{"p", "/a", "GET"}})
 		require.Error(t, err)
 	})
 

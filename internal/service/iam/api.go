@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	biz "grain/internal/biz/iam"
+	"grain/pkg/db"
 	"grain/pkg/db/filter"
 	"grain/pkg/errorx"
 )
@@ -204,7 +205,7 @@ func (s *Service) ListApis(c *gin.Context) {
 		})
 	}
 
-	apis, total, err := s.biz.Api.List(c.Request.Context(), biz.ApiListOptions{
+	apis, total, err := s.biz.Api.List(c.Request.Context(), db.ListOptions{
 		Offset:   offset,
 		PageSize: limit,
 		Filters:  filters,

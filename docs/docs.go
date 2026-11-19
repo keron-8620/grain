@@ -2416,7 +2416,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "根据主键彻底删除系统用户账号",
+                "description": "根据主键软删除系统用户账号，已删除用户的用户名不可复用",
                 "produces": [
                     "application/json"
                 ],
@@ -4100,8 +4100,8 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{},
-	Title:            "artweb API",
-	Description:      "artweb 自动化运维平台 IAM 模块 API 接口文档",
+	Title:            "grain API",
+	Description:      "grain 自动化平台 API 接口文档",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

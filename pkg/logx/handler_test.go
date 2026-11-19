@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type ctxKey string
+
 func TestContextWithAttrs(t *testing.T) {
 	t.Run("nil context handling", func(t *testing.T) {
 		var nilCtx context.Context
@@ -23,7 +25,7 @@ func TestContextWithAttrs(t *testing.T) {
 	})
 
 	t.Run("empty attrs returns original context", func(t *testing.T) {
-		ctx := context.WithValue(context.Background(), "custom", "val")
+		ctx := context.WithValue(context.Background(), ctxKey("custom"), "val")
 		newCtx := ContextWithAttrs(ctx)
 		assert.Equal(t, ctx, newCtx)
 	})

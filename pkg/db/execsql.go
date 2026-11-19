@@ -66,6 +66,7 @@ func matchDollarQuote(sql string, i int) (string, bool) {
 		return "", false
 	}
 	first := sql[i+1]
+	//nolint:staticcheck // QF1001
 	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
 		return "", false
 	}
@@ -74,6 +75,7 @@ func matchDollarQuote(sql string, i int) (string, bool) {
 		if ch == '$' {
 			return sql[i : j+1], true
 		}
+		//nolint:staticcheck // QF1001
 		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
 			return "", false
 		}

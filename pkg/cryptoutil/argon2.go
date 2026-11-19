@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 
@@ -192,7 +193,11 @@ func (h *Argon2idHasher) VerifyString(password, hashStr string) (bool, error) {
 		case "t":
 			time = uint32(val)
 		case "p":
+			if val > math.MaxUint8 {
+				return false, fmt.Errorf("threads value %d overflow uint8", val)
+			}
 			threads = uint8(val)
+
 		}
 	}
 
@@ -229,7 +234,11 @@ func (h *Argon2idHasher) VerifyString(password, hashStr string) (bool, error) {
 		return false, errors.New("argon2 salt or hash length is invalid or exceeds safety limits")
 	}
 
-	derived := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(len(expectedHash)))
+	l := len(expectedHash)
+	if l > math.MaxUint32 {
+		return false, errors.New("expectedHash too long")
+	}
+	derived := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(l))
 
 	return subtle.ConstantTimeCompare(derived, expectedHash) == 1, nil
 }

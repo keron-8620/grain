@@ -10,6 +10,7 @@ import (
 
 	biz "grain/internal/biz/iam"
 	"grain/pkg/auth"
+	"grain/pkg/db"
 	"grain/pkg/db/filter"
 )
 
@@ -142,7 +143,7 @@ func TestButtonRepo_CRUD(t *testing.T) {
 	assert.Len(t, updated.Apis, 0)
 
 	// 6. List
-	list, total, err := repo.List(ctx, biz.ButtonListOptions{
+	list, total, err := repo.List(ctx, db.ListOptions{
 		PageSize: 10,
 		Filters: []filter.ListFilter{
 			{Field: "name", Op: filter.ListFilterContains, Value: "btn-user"},

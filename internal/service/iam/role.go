@@ -188,7 +188,7 @@ func (s *Service) ListRoles(c *gin.Context) {
 		})
 	}
 
-	roles, total, err := s.biz.Role.List(c.Request.Context(), biz.RoleListOptions{
+	roles, total, err := s.biz.Role.List(c.Request.Context(), db.ListOptions{
 		Offset:   offset,
 		PageSize: limit,
 		Filters:  filters,

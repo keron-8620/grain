@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -141,8 +142,11 @@ func (fe *AESFileEncryptor) Zero() {
 // computeChunkNonceInto populates dst (minimum 12 bytes) with the derived nonce for chunkIndex.
 func computeChunkNonceInto(dst, baseNonce []byte, chunkIndex uint64) {
 	copy(dst[:12], baseNonce[:12])
-	orig := binary.BigEndian.Uint64(dst[4:12])
-	binary.BigEndian.PutUint64(dst[4:12], orig^chunkIndex)
+	var counter [8]byte
+	binary.BigEndian.PutUint64(counter[:], chunkIndex)
+	for i := 0; i < 8; i++ {
+		dst[4+i] ^= counter[i]
+	}
 }
 
 // computeChunkAADInto populates dst (minimum 9 bytes) with the STREAM AAD for chunkIndex and isLast flag.
@@ -266,11 +270,17 @@ func (fe *AESFileEncryptor) EncryptStream(ctx context.Context, src io.Reader, ds
 		computeChunkNonceInto(nonce, baseNonce, chunkIndex)
 		computeChunkAADInto(aad, chunkIndex, isLast)
 
+		// #nosec G407 -- nonce derived from random baseNonce + chunkIndex counter, unique per chunk
 		encryptedChunk := activeAEAD.Seal(encBuf[:0], nonce, bufA[:nA], aad)
 
 		// Framing: isLast (1B) + chunkLen (4B) + encrypted payload
 		frameHeader[0] = isLast
-		binary.BigEndian.PutUint32(frameHeader[1:], uint32(len(encryptedChunk)))
+
+		l := len(encryptedChunk)
+		if l > math.MaxUint32 {
+			return errors.New("encrypted chunk too large")
+		}
+		binary.BigEndian.PutUint32(frameHeader[1:], uint32(l))
 
 		if _, err := dst.Write(frameHeader); err != nil {
 			return errors.WrapIf(err, "failed to write frame header")
@@ -402,6 +412,14 @@ func (fe *AESFileEncryptor) DecryptStream(ctx context.Context, src io.Reader, ds
 
 		isLast := frameHeader[0]
 		chunkLen := binary.BigEndian.Uint32(frameHeader[1:])
+
+		if maxEncChunkLen < 0 || maxEncChunkLen > math.MaxUint32 {
+			return errors.New("maxEncChunkLen overflow")
+		}
+		if chunkLen > uint32(maxEncChunkLen) {
+			return errors.Errorf("invalid frame length: %d exceeds maximum chunk size", chunkLen)
+		}
+
 		if chunkLen > uint32(maxEncChunkLen) {
 			return errors.Errorf("invalid frame length: %d exceeds maximum chunk size", chunkLen)
 		}

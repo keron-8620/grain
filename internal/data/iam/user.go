@@ -55,11 +55,8 @@ func NewUserRepo(
 
 // ==================== DO ↔ PO conversion ====================
 
-func toBizUser(po *userPO) *biz.User {
-	if po == nil {
-		return nil
-	}
-	u := &biz.User{
+func toBizUser(po userPO) biz.User {
+	u := biz.User{
 		ID:           po.ID,
 		Username:     po.Username,
 		Password:     po.Password,
@@ -70,18 +67,15 @@ func toBizUser(po *userPO) *biz.User {
 		UpdatedAt:    po.UpdatedAt,
 	}
 
-	if po.Role.ID > 0 {
-		u.Role = toBizRole(&po.Role)
+	if po.Role != nil {
+		u.Role = new(toBizRole(*po.Role))
 	}
 
 	return u
 }
 
-func newUserPO(do *biz.User) *userPO {
-	if do == nil {
-		return nil
-	}
-	return &userPO{
+func newUserPO(do biz.User) userPO {
+	return userPO{
 		ID:           do.ID,
 		CreatedAt:    do.CreatedAt,
 		UpdatedAt:    do.UpdatedAt,
@@ -104,7 +98,7 @@ func (r *userRepo) Create(ctx context.Context, do *biz.User) (*biz.User, error) 
 		return nil, errors.New("create user: username cannot be empty")
 	}
 
-	po := newUserPO(do)
+	po := newUserPO(*do)
 	now := time.Now()
 	if po.CreatedAt.IsZero() {
 		po.CreatedAt = now
@@ -122,7 +116,7 @@ func (r *userRepo) Create(ctx context.Context, do *biz.User) (*biz.User, error) 
 	}
 
 	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpWrite, "create user", func(dbCtx context.Context) error {
-		return db.DBCreateTX(dbCtx, r.data.gormdb, &userPO{}, po)
+		return db.DBCreateTX(dbCtx, r.data.gormdb, &userPO{}, &po)
 	}, slog.String("username", po.Username)); err != nil {
 		return nil, err
 	}
@@ -139,7 +133,7 @@ func (r *userRepo) Update(ctx context.Context, do *biz.User) (*biz.User, error) 
 		return nil, errors.New("update user: username cannot be empty")
 	}
 
-	po := newUserPO(do)
+	po := newUserPO(*do)
 	updates := po.ToUpdateMap()
 
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
@@ -217,7 +211,27 @@ func (r *userRepo) FindByID(ctx context.Context, id uint64, preloads ...string) 
 		return nil, err
 	}
 
-	return toBizUser(&po), nil
+	return new(toBizUser(po)), nil
+}
+
+// UsernameExists reports whether the username is already taken, including by soft-deleted
+// users. Deleted usernames stay reserved so they can never be recycled.
+func (r *userRepo) UsernameExists(ctx context.Context, username string) (bool, error) {
+	if username == "" {
+		return false, nil
+	}
+
+	var count int64
+	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpRead, "check username existence", func(dbCtx context.Context) error {
+		return r.data.gormdb.WithContext(dbCtx).
+			Unscoped().
+			Model(&userPO{}).
+			Where("username = ?", username).
+			Count(&count).Error
+	}, slog.String("username", username)); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r *userRepo) FindByUsername(ctx context.Context, username string, preloads ...string) (*biz.User, error) {
@@ -243,10 +257,10 @@ func (r *userRepo) FindByUsername(ctx context.Context, username string, preloads
 		return nil, err
 	}
 
-	return toBizUser(&po), nil
+	return new(toBizUser(po)), nil
 }
 
-func (r *userRepo) List(ctx context.Context, opts biz.UserListOptions) ([]*biz.User, int64, error) {
+func (r *userRepo) List(ctx context.Context, opts db.ListOptions) ([]biz.User, int64, error) {
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
 		r.logger.DebugContext(
 			ctx,
@@ -255,10 +269,7 @@ func (r *userRepo) List(ctx context.Context, opts biz.UserListOptions) ([]*biz.U
 		)
 	}
 
-	if opts.PageSize <= 0 {
-		opts.PageSize = db.DefaultPageSize
-	}
-	if err := db.ValidateListOptions(opts.Offset, opts.PageSize); err != nil {
+	if err := opts.Normalize(); err != nil {
 		return nil, 0, err
 	}
 
@@ -288,9 +299,9 @@ func (r *userRepo) List(ctx context.Context, opts biz.UserListOptions) ([]*biz.U
 		return nil, 0, err
 	}
 
-	res := make([]*biz.User, 0, len(pos))
+	res := make([]biz.User, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizUser(&pos[i]))
+		res = append(res, toBizUser(pos[i]))
 	}
 	return res, total, nil
 }

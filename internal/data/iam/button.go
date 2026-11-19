@@ -34,11 +34,8 @@ func NewButtonRepo(
 
 // ==================== DO ↔ PO conversion ====================
 
-func toBizButton(po *buttonPO) *biz.Button {
-	if po == nil {
-		return nil
-	}
-	b := &biz.Button{
+func toBizButton(po buttonPO) biz.Button {
+	b := biz.Button{
 		ID:        po.ID,
 		Name:      po.Name,
 		Sort:      po.Sort,
@@ -49,15 +46,15 @@ func toBizButton(po *buttonPO) *biz.Button {
 		UpdatedAt: po.UpdatedAt,
 	}
 
-	if po.Menu.ID > 0 {
-		b.Menu = toBizMenu(&po.Menu)
+	if po.Menu != nil {
+		b.Menu = new(toBizMenu(*po.Menu))
 	}
 
 	if len(po.Apis) > 0 {
-		b.Apis = make([]*biz.Api, len(po.Apis))
+		b.Apis = make([]biz.Api, len(po.Apis))
 		b.ApiIDs = make([]uint64, len(po.Apis))
 		for i := range po.Apis {
-			b.Apis[i] = toBizApi(&po.Apis[i])
+			b.Apis[i] = toBizApi(po.Apis[i])
 			b.ApiIDs[i] = po.Apis[i].ID
 		}
 	}
@@ -65,11 +62,8 @@ func toBizButton(po *buttonPO) *biz.Button {
 	return b
 }
 
-func newButtonPO(do *biz.Button) *buttonPO {
-	if do == nil {
-		return nil
-	}
-	po := &buttonPO{
+func newButtonPO(do biz.Button) buttonPO {
+	po := buttonPO{
 		ID:        do.ID,
 		CreatedAt: do.CreatedAt,
 		UpdatedAt: do.UpdatedAt,
@@ -83,8 +77,8 @@ func newButtonPO(do *biz.Button) *buttonPO {
 	if len(do.Apis) > 0 {
 		po.Apis = make([]apiPO, 0, len(do.Apis))
 		for _, a := range do.Apis {
-			if a != nil && a.ID > 0 {
-				po.Apis = append(po.Apis, *newApiPO(a))
+			if a.ID > 0 {
+				po.Apis = append(po.Apis, newApiPO(a))
 			}
 		}
 	} else if len(do.ApiIDs) > 0 {
@@ -107,7 +101,7 @@ func (r *buttonRepo) Create(ctx context.Context, do *biz.Button) (*biz.Button, e
 		return nil, errors.New("create button: model cannot be nil")
 	}
 
-	po := newButtonPO(do)
+	po := newButtonPO(*do)
 	now := time.Now()
 	if po.CreatedAt.IsZero() {
 		po.CreatedAt = now
@@ -130,7 +124,7 @@ func (r *buttonRepo) Create(ctx context.Context, do *biz.Button) (*biz.Button, e
 	}
 
 	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpWrite, "create button", func(dbCtx context.Context) error {
-		return db.DBCreateRelationTx(dbCtx, r.data.gormdb, &buttonPO{}, po, upmap)
+		return db.DBCreateRelationTx(dbCtx, r.data.gormdb, &buttonPO{}, &po, upmap)
 	}, slog.String("name", po.Name), slog.Uint64("menu_id", uint64(po.MenuID))); err != nil {
 		return nil, err
 	}
@@ -144,7 +138,7 @@ func (r *buttonRepo) Update(ctx context.Context, do *biz.Button) (*biz.Button, e
 		return nil, errors.New("update button: invalid argument")
 	}
 
-	po := newButtonPO(do)
+	po := newButtonPO(*do)
 	updates := po.ToUpdateMap()
 
 	upmap := make(map[string]any, 1)
@@ -217,10 +211,10 @@ func (r *buttonRepo) FindByID(ctx context.Context, id uint64, preloads ...string
 		return nil, err
 	}
 
-	return toBizButton(&po), nil
+	return new(toBizButton(po)), nil
 }
 
-func (r *buttonRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]*biz.Button, error) {
+func (r *buttonRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]biz.Button, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -245,9 +239,9 @@ func (r *buttonRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...st
 		return nil, err
 	}
 
-	res := make([]*biz.Button, 0, len(pos))
+	res := make([]biz.Button, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizButton(&pos[i]))
+		res = append(res, toBizButton(pos[i]))
 	}
 	return res, nil
 }
@@ -263,10 +257,10 @@ func (r *buttonRepo) FindByName(ctx context.Context, name string) (*biz.Button, 
 		return nil, err
 	}
 
-	return toBizButton(&po), nil
+	return new(toBizButton(po)), nil
 }
 
-func (r *buttonRepo) List(ctx context.Context, opts biz.ButtonListOptions) ([]*biz.Button, int64, error) {
+func (r *buttonRepo) List(ctx context.Context, opts db.ListOptions) ([]biz.Button, int64, error) {
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
 		r.logger.DebugContext(
 			ctx,
@@ -275,10 +269,7 @@ func (r *buttonRepo) List(ctx context.Context, opts biz.ButtonListOptions) ([]*b
 		)
 	}
 
-	if opts.PageSize <= 0 {
-		opts.PageSize = db.DefaultPageSize
-	}
-	if err := db.ValidateListOptions(opts.Offset, opts.PageSize); err != nil {
+	if err := opts.Normalize(); err != nil {
 		return nil, 0, err
 	}
 
@@ -311,14 +302,14 @@ func (r *buttonRepo) List(ctx context.Context, opts biz.ButtonListOptions) ([]*b
 		return nil, 0, err
 	}
 
-	res := make([]*biz.Button, 0, len(pos))
+	res := make([]biz.Button, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizButton(&pos[i]))
+		res = append(res, toBizButton(pos[i]))
 	}
 	return res, total, nil
 }
 
-func (r *buttonRepo) ListAllWithApis(ctx context.Context) ([]*biz.Button, error) {
+func (r *buttonRepo) ListAllWithApis(ctx context.Context) ([]biz.Button, error) {
 	qp := db.QueryParams{
 		Preloads: []string{"Apis"},
 		OrderBy:  []string{"id ASC"},
@@ -331,9 +322,9 @@ func (r *buttonRepo) ListAllWithApis(ctx context.Context) ([]*biz.Button, error)
 		return nil, err
 	}
 
-	res := make([]*biz.Button, 0, len(pos))
+	res := make([]biz.Button, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizButton(&pos[i]))
+		res = append(res, toBizButton(pos[i]))
 	}
 	return res, nil
 }
@@ -365,7 +356,7 @@ func (r *buttonRepo) AddGroupPolicy(ctx context.Context, button *biz.Button) err
 	// Associated API inheritance policies: (button_sub, api_sub)
 	if len(button.Apis) > 0 {
 		for _, api := range button.Apis {
-			if api != nil {
+			if api.ID > 0 {
 				addApiRule(api.ID)
 			}
 		}

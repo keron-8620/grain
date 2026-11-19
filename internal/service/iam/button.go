@@ -214,7 +214,7 @@ func (s *Service) ListButtons(c *gin.Context) {
 		})
 	}
 
-	btns, total, err := s.biz.Button.List(c.Request.Context(), biz.ButtonListOptions{
+	btns, total, err := s.biz.Button.List(c.Request.Context(), db.ListOptions{
 		Offset:   offset,
 		PageSize: limit,
 		Filters:  filters,

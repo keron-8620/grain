@@ -132,7 +132,7 @@ func TestServer_InitServer_And_E2E(t *testing.T) {
 			Host: "127.0.0.1",
 			Port: 8080,
 		},
-		Security: &conf.SecurityConfig{
+		IAM: &conf.IAMConfig{
 			Token: conf.TokenConfig{
 				AccessDuration:  time.Hour,
 				RefreshDuration: 24 * time.Hour,

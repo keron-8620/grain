@@ -35,11 +35,8 @@ func NewRoleRepo(
 
 // ==================== DO ↔ PO conversion ====================
 
-func toBizRole(po *rolePO) *biz.Role {
-	if po == nil {
-		return nil
-	}
-	r := &biz.Role{
+func toBizRole(po rolePO) biz.Role {
+	r := biz.Role{
 		ID:        po.ID,
 		Name:      po.Name,
 		Descr:     po.Descr,
@@ -48,26 +45,26 @@ func toBizRole(po *rolePO) *biz.Role {
 	}
 
 	if len(po.Apis) > 0 {
-		r.Apis = make([]*biz.Api, len(po.Apis))
+		r.Apis = make([]biz.Api, len(po.Apis))
 		r.ApiIDs = make([]uint64, len(po.Apis))
 		for i := range po.Apis {
-			r.Apis[i] = toBizApi(&po.Apis[i])
+			r.Apis[i] = toBizApi(po.Apis[i])
 			r.ApiIDs[i] = po.Apis[i].ID
 		}
 	}
 	if len(po.Menus) > 0 {
-		r.Menus = make([]*biz.Menu, len(po.Menus))
+		r.Menus = make([]biz.Menu, len(po.Menus))
 		r.MenuIDs = make([]uint64, len(po.Menus))
 		for i := range po.Menus {
-			r.Menus[i] = toBizMenu(&po.Menus[i])
+			r.Menus[i] = toBizMenu(po.Menus[i])
 			r.MenuIDs[i] = po.Menus[i].ID
 		}
 	}
 	if len(po.Buttons) > 0 {
-		r.Buttons = make([]*biz.Button, len(po.Buttons))
+		r.Buttons = make([]biz.Button, len(po.Buttons))
 		r.ButtonIDs = make([]uint64, len(po.Buttons))
 		for i := range po.Buttons {
-			r.Buttons[i] = toBizButton(&po.Buttons[i])
+			r.Buttons[i] = toBizButton(po.Buttons[i])
 			r.ButtonIDs[i] = po.Buttons[i].ID
 		}
 	}
@@ -75,11 +72,8 @@ func toBizRole(po *rolePO) *biz.Role {
 	return r
 }
 
-func newRolePO(do *biz.Role) *rolePO {
-	if do == nil {
-		return nil
-	}
-	po := &rolePO{
+func newRolePO(do biz.Role) rolePO {
+	po := rolePO{
 		StandardModel: db.StandardModel{
 			BaseModel: db.BaseModel{ID: do.ID},
 			CreatedAt: do.CreatedAt,
@@ -92,8 +86,8 @@ func newRolePO(do *biz.Role) *rolePO {
 	if len(do.Apis) > 0 {
 		po.Apis = make([]apiPO, len(do.Apis))
 		for i, a := range do.Apis {
-			if a != nil {
-				po.Apis[i] = *newApiPO(a)
+			if a.ID > 0 {
+				po.Apis[i] = newApiPO(a)
 			}
 		}
 	} else if len(do.ApiIDs) > 0 {
@@ -106,8 +100,8 @@ func newRolePO(do *biz.Role) *rolePO {
 	if len(do.Menus) > 0 {
 		po.Menus = make([]menuPO, len(do.Menus))
 		for i, m := range do.Menus {
-			if m != nil {
-				po.Menus[i] = *newMenuPO(m)
+			if m.ID > 0 {
+				po.Menus[i] = newMenuPO(m)
 			}
 		}
 	} else if len(do.MenuIDs) > 0 {
@@ -120,8 +114,8 @@ func newRolePO(do *biz.Role) *rolePO {
 	if len(do.Buttons) > 0 {
 		po.Buttons = make([]buttonPO, len(do.Buttons))
 		for i, b := range do.Buttons {
-			if b != nil {
-				po.Buttons[i] = *newButtonPO(b)
+			if b.ID > 0 {
+				po.Buttons[i] = newButtonPO(b)
 			}
 		}
 	} else if len(do.ButtonIDs) > 0 {
@@ -142,7 +136,7 @@ func (r *roleRepo) Create(ctx context.Context, do *biz.Role) (*biz.Role, error) 
 		return nil, errors.New("create role: model must not be nil")
 	}
 
-	po := newRolePO(do)
+	po := newRolePO(*do)
 	now := time.Now()
 	if po.CreatedAt.IsZero() {
 		po.CreatedAt = now
@@ -166,7 +160,7 @@ func (r *roleRepo) Create(ctx context.Context, do *biz.Role) (*biz.Role, error) 
 	}
 
 	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpWrite, "create role", func(dbCtx context.Context) error {
-		return db.DBCreateRelationTx(dbCtx, r.data.gormdb, &rolePO{}, po, upmap)
+		return db.DBCreateRelationTx(dbCtx, r.data.gormdb, &rolePO{}, &po, upmap)
 	}, slog.String("name", po.Name)); err != nil {
 		return nil, err
 	}
@@ -184,7 +178,7 @@ func (r *roleRepo) Update(ctx context.Context, do *biz.Role) (*biz.Role, error) 
 		return nil, errors.New("update role: name cannot be empty")
 	}
 
-	po := newRolePO(do)
+	po := newRolePO(*do)
 	updates := po.ToUpdateMap()
 
 	upmap := make(map[string]any)
@@ -254,7 +248,8 @@ func (r *roleRepo) Delete(ctx context.Context, id uint64) error {
 			}
 
 			var userCount int64
-			if err := tx.Model(&userPO{}).Where("role_id = ?", id).Count(&userCount).Error; err != nil {
+			// Unscoped: soft-deleted users still hold the FK reference, so count them too.
+			if err := tx.Unscoped().Model(&userPO{}).Where("role_id = ?", id).Count(&userCount).Error; err != nil {
 				return err
 			}
 			if userCount > 0 {
@@ -303,7 +298,7 @@ func (r *roleRepo) FindByID(ctx context.Context, id uint64, preloads ...string) 
 		return nil, err
 	}
 
-	return toBizRole(&po), nil
+	return new(toBizRole(po)), nil
 }
 
 func (r *roleRepo) FindByName(ctx context.Context, name string) (*biz.Role, error) {
@@ -317,10 +312,10 @@ func (r *roleRepo) FindByName(ctx context.Context, name string) (*biz.Role, erro
 		return nil, err
 	}
 
-	return toBizRole(&po), nil
+	return new(toBizRole(po)), nil
 }
 
-func (r *roleRepo) List(ctx context.Context, opts biz.RoleListOptions) ([]*biz.Role, int64, error) {
+func (r *roleRepo) List(ctx context.Context, opts db.ListOptions) ([]biz.Role, int64, error) {
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
 		r.logger.DebugContext(
 			ctx,
@@ -329,10 +324,7 @@ func (r *roleRepo) List(ctx context.Context, opts biz.RoleListOptions) ([]*biz.R
 		)
 	}
 
-	if opts.PageSize <= 0 {
-		opts.PageSize = db.DefaultPageSize
-	}
-	if err := db.ValidateListOptions(opts.Offset, opts.PageSize); err != nil {
+	if err := opts.Normalize(); err != nil {
 		return nil, 0, err
 	}
 
@@ -365,14 +357,14 @@ func (r *roleRepo) List(ctx context.Context, opts biz.RoleListOptions) ([]*biz.R
 		return nil, 0, err
 	}
 
-	res := make([]*biz.Role, 0, len(pos))
+	res := make([]biz.Role, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizRole(&pos[i]))
+		res = append(res, toBizRole(pos[i]))
 	}
 	return res, total, nil
 }
 
-func (r *roleRepo) ListAllWithRelations(ctx context.Context) ([]*biz.Role, error) {
+func (r *roleRepo) ListAllWithRelations(ctx context.Context) ([]biz.Role, error) {
 	qp := db.QueryParams{
 		Preloads:            []string{"Apis", "Menus", "Buttons"},
 		OrderBy:             []string{"id ASC"},
@@ -387,9 +379,9 @@ func (r *roleRepo) ListAllWithRelations(ctx context.Context) ([]*biz.Role, error
 		return nil, err
 	}
 
-	res := make([]*biz.Role, 0, len(pos))
+	res := make([]biz.Role, 0, len(pos))
 	for i := range pos {
-		res = append(res, toBizRole(&pos[i]))
+		res = append(res, toBizRole(pos[i]))
 	}
 	return res, nil
 }
@@ -397,7 +389,8 @@ func (r *roleRepo) ListAllWithRelations(ctx context.Context) ([]*biz.Role, error
 func (r *roleRepo) CountUsersByRoleID(ctx context.Context, roleID uint64) (int64, error) {
 	var count int64
 	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpRead, "count users by role", func(dbCtx context.Context) error {
-		return r.data.gormdb.WithContext(dbCtx).Model(&userPO{}).Where("role_id = ?", roleID).Count(&count).Error
+		// Unscoped: soft-deleted users still reference the role, so it must remain protected.
+		return r.data.gormdb.WithContext(dbCtx).Unscoped().Model(&userPO{}).Where("role_id = ?", roleID).Count(&count).Error
 	}, slog.Uint64("role_id", roleID)); err != nil {
 		return 0, err
 	}
@@ -416,7 +409,7 @@ func (r *roleRepo) AddGroupPolicy(ctx context.Context, role *biz.Role) error {
 
 	// API link policy: (role_sub, api_sub)
 	for _, a := range role.Apis {
-		if a != nil && a.ID > 0 {
+		if a.ID > 0 {
 			rules = append(rules, []string{sub, auth.ApiToSubject(a.ID)})
 		}
 	}
@@ -430,7 +423,7 @@ func (r *roleRepo) AddGroupPolicy(ctx context.Context, role *biz.Role) error {
 
 	// Menu link policy: (role_sub, menu_sub)
 	for _, m := range role.Menus {
-		if m != nil && m.ID > 0 {
+		if m.ID > 0 {
 			rules = append(rules, []string{sub, auth.MenuToSubject(m.ID)})
 		}
 	}
@@ -444,7 +437,7 @@ func (r *roleRepo) AddGroupPolicy(ctx context.Context, role *biz.Role) error {
 
 	// Button link policy: (role_sub, button_sub)
 	for _, b := range role.Buttons {
-		if b != nil && b.ID > 0 {
+		if b.ID > 0 {
 			rules = append(rules, []string{sub, auth.ButtonToSubject(b.ID)})
 		}
 	}

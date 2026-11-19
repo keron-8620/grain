@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"grain/pkg/db"
 	"grain/pkg/errorx"
 )
 
@@ -236,11 +237,11 @@ func TestMenuUseCase_ListTree(t *testing.T) {
 	menuRepo := newMockMenuRepo()
 	uc := NewMenuUseCase(menuRepo, nil)
 
-	p1, _ := uc.Create(ctx, &Menu{Name: "Parent1", Path: "/p1", Sort: 2})
+	p1, _ := uc.Create(ctx, &Menu{Name: "Parent1", Path: "/p1", Sort: 2, IsActive: true})
 	p1ID := p1.ID
-	p2, _ := uc.Create(ctx, &Menu{Name: "Parent0", Path: "/p0", Sort: 1})
-	c1, _ := uc.Create(ctx, &Menu{Name: "Child1", Path: "/p1/c1", ParentID: &p1ID, Sort: 2})
-	c2, _ := uc.Create(ctx, &Menu{Name: "Child0", Path: "/p1/c0", ParentID: &p1ID, Sort: 1})
+	p2, _ := uc.Create(ctx, &Menu{Name: "Parent0", Path: "/p0", Sort: 1, IsActive: true})
+	c1, _ := uc.Create(ctx, &Menu{Name: "Child1", Path: "/p1/c1", ParentID: &p1ID, Sort: 2, IsActive: true})
+	c2, _ := uc.Create(ctx, &Menu{Name: "Child0", Path: "/p1/c0", ParentID: &p1ID, Sort: 1, IsActive: true})
 	_ = c1
 	_ = c2
 	_ = p2
@@ -309,7 +310,7 @@ func TestMenuUseCase_GetAndList(t *testing.T) {
 	})
 
 	t.Run("list and list all", func(t *testing.T) {
-		list, total, err := uc.List(ctx, MenuListOptions{})
+		list, total, err := uc.List(ctx, db.ListOptions{})
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), total)
 		assert.Len(t, list, 1)

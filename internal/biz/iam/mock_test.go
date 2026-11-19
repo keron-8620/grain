@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"grain/pkg/db"
 )
 
 // mockApiRepo is an in-memory mock for ApiRepo
@@ -27,7 +29,7 @@ type mockApiRepo struct {
 	updatePolicyCalled  bool
 	removePolicyCalled  bool
 	lastPolicyApi       *Api
-	lastPoliciesApis    []*Api
+	lastPoliciesApis    []Api
 	lastPolicyOldApi    *Api
 	lastPolicyNewApi    *Api
 	lastRemoveInherited bool
@@ -80,12 +82,11 @@ func (m *mockApiRepo) FindByID(ctx context.Context, id uint64) (*Api, error) {
 	return &cp, nil
 }
 
-func (m *mockApiRepo) FindByIDs(ctx context.Context, ids []uint64) ([]*Api, error) {
-	var res []*Api
+func (m *mockApiRepo) FindByIDs(ctx context.Context, ids []uint64) ([]Api, error) {
+	var res []Api
 	for _, id := range ids {
 		if a, ok := m.apis[id]; ok {
-			cp := *a
-			res = append(res, &cp)
+			res = append(res, *a)
 		}
 	}
 	return res, nil
@@ -97,21 +98,19 @@ func (m *mockApiRepo) FindByURLAndMethod(ctx context.Context, url, method string
 	}
 	for _, a := range m.apis {
 		if a.URL == url && a.Method == method {
-			cp := *a
-			return &cp, nil
+			return a, nil
 		}
 	}
 	return nil, nil
 }
 
-func (m *mockApiRepo) List(ctx context.Context, opts ApiListOptions) ([]*Api, int64, error) {
+func (m *mockApiRepo) List(ctx context.Context, opts db.ListOptions) ([]Api, int64, error) {
 	if m.listErr != nil {
 		return nil, 0, m.listErr
 	}
-	var res []*Api
+	var res []Api
 	for _, a := range m.apis {
-		cp := *a
-		res = append(res, &cp)
+		res = append(res, *a)
 	}
 	return res, int64(len(res)), nil
 }
@@ -142,16 +141,15 @@ func (m *mockApiRepo) SyncRoutes(ctx context.Context, routes []ApiRoute) (int, e
 	return count, nil
 }
 
-func (m *mockApiRepo) FindByRoutes(ctx context.Context, routes []ApiRoute) ([]*Api, error) {
+func (m *mockApiRepo) FindByRoutes(ctx context.Context, routes []ApiRoute) ([]Api, error) {
 	if m.findByRoutesErr != nil {
 		return nil, m.findByRoutesErr
 	}
-	var res []*Api
+	var res []Api
 	for _, rt := range routes {
 		for _, a := range m.apis {
 			if a.URL == rt.URL && a.Method == rt.Method {
-				cp := *a
-				res = append(res, &cp)
+				res = append(res, *a)
 				break
 			}
 		}
@@ -165,7 +163,7 @@ func (m *mockApiRepo) AddPolicy(ctx context.Context, api *Api) error {
 	return m.addPolicyErr
 }
 
-func (m *mockApiRepo) AddPolicies(ctx context.Context, apis []*Api) error {
+func (m *mockApiRepo) AddPolicies(ctx context.Context, apis []Api) error {
 	m.addPoliciesCalled = true
 	m.lastPoliciesApis = apis
 	return m.addPoliciesErr
@@ -249,12 +247,11 @@ func (m *mockButtonRepo) FindByID(ctx context.Context, id uint64, preloads ...st
 	return &cp, nil
 }
 
-func (m *mockButtonRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]*Button, error) {
-	var res []*Button
+func (m *mockButtonRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]Button, error) {
+	var res []Button
 	for _, id := range ids {
 		if b, ok := m.buttons[id]; ok {
-			cp := *b
-			res = append(res, &cp)
+			res = append(res, *b)
 		}
 	}
 	return res, nil
@@ -266,18 +263,17 @@ func (m *mockButtonRepo) FindByName(ctx context.Context, name string) (*Button, 
 	}
 	for _, b := range m.buttons {
 		if b.Name == name {
-			cp := *b
-			return &cp, nil
+			return b, nil
 		}
 	}
 	return nil, nil
 }
 
-func (m *mockButtonRepo) List(ctx context.Context, opts ButtonListOptions) ([]*Button, int64, error) {
+func (m *mockButtonRepo) List(ctx context.Context, opts db.ListOptions) ([]Button, int64, error) {
 	if m.listErr != nil {
 		return nil, 0, m.listErr
 	}
-	var res []*Button
+	var res []Button
 	for _, b := range m.buttons {
 		// Filter by menu_id if specified in filters
 		match := true
@@ -290,18 +286,16 @@ func (m *mockButtonRepo) List(ctx context.Context, opts ButtonListOptions) ([]*B
 			}
 		}
 		if match {
-			cp := *b
-			res = append(res, &cp)
+			res = append(res, *b)
 		}
 	}
 	return res, int64(len(res)), nil
 }
 
-func (m *mockButtonRepo) ListAllWithApis(ctx context.Context) ([]*Button, error) {
-	var res []*Button
+func (m *mockButtonRepo) ListAllWithApis(ctx context.Context) ([]Button, error) {
+	var res []Button
 	for _, b := range m.buttons {
-		cp := *b
-		res = append(res, &cp)
+		res = append(res, *b)
 	}
 	return res, nil
 }
@@ -384,12 +378,11 @@ func (m *mockMenuRepo) FindByID(ctx context.Context, id uint64, preloads ...stri
 	return &cp, nil
 }
 
-func (m *mockMenuRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]*Menu, error) {
-	var res []*Menu
+func (m *mockMenuRepo) FindByIDs(ctx context.Context, ids []uint64, preloads ...string) ([]Menu, error) {
+	var res []Menu
 	for _, id := range ids {
 		if menu, ok := m.menus[id]; ok {
-			cp := *menu
-			res = append(res, &cp)
+			res = append(res, *menu)
 		}
 	}
 	return res, nil
@@ -421,26 +414,24 @@ func (m *mockMenuRepo) FindByPath(ctx context.Context, path string) (*Menu, erro
 	return nil, nil
 }
 
-func (m *mockMenuRepo) List(ctx context.Context, opts MenuListOptions) ([]*Menu, int64, error) {
+func (m *mockMenuRepo) List(ctx context.Context, opts db.ListOptions) ([]Menu, int64, error) {
 	if m.listErr != nil {
 		return nil, 0, m.listErr
 	}
-	var res []*Menu
+	var res []Menu
 	for _, menu := range m.menus {
-		cp := *menu
-		res = append(res, &cp)
+		res = append(res, *menu)
 	}
 	return res, int64(len(res)), nil
 }
 
-func (m *mockMenuRepo) ListAllWithApis(ctx context.Context) ([]*Menu, error) {
+func (m *mockMenuRepo) ListAllWithApis(ctx context.Context) ([]Menu, error) {
 	if m.listAllErr != nil {
 		return nil, m.listAllErr
 	}
-	var res []*Menu
+	var res []Menu
 	for _, menu := range m.menus {
-		cp := *menu
-		res = append(res, &cp)
+		res = append(res, *menu)
 	}
 	return res, nil
 }
@@ -550,26 +541,24 @@ func (m *mockRoleRepo) FindByName(ctx context.Context, name string) (*Role, erro
 	return nil, nil
 }
 
-func (m *mockRoleRepo) List(ctx context.Context, opts RoleListOptions) ([]*Role, int64, error) {
+func (m *mockRoleRepo) List(ctx context.Context, opts db.ListOptions) ([]Role, int64, error) {
 	if m.listErr != nil {
 		return nil, 0, m.listErr
 	}
-	var res []*Role
+	var res []Role
 	for _, r := range m.roles {
-		cp := *r
-		res = append(res, &cp)
+		res = append(res, *r)
 	}
 	return res, int64(len(res)), nil
 }
 
-func (m *mockRoleRepo) ListAllWithRelations(ctx context.Context) ([]*Role, error) {
+func (m *mockRoleRepo) ListAllWithRelations(ctx context.Context) ([]Role, error) {
 	if m.listAllErr != nil {
 		return nil, m.listAllErr
 	}
-	var res []*Role
+	var res []Role
 	for _, r := range m.roles {
-		cp := *r
-		res = append(res, &cp)
+		res = append(res, *r)
 	}
 	return res, nil
 }
@@ -595,6 +584,7 @@ func (m *mockRoleRepo) RemoveGroupPolicy(ctx context.Context, role *Role) error 
 // mockUserRepo is an in-memory mock for UserRepo
 type mockUserRepo struct {
 	users                      map[uint64]*User
+	deletedUsernames           map[string]struct{}
 	tokenVersions              map[uint64]uint64
 	consumedTokens             map[string]bool
 	nextID                     uint64
@@ -621,6 +611,7 @@ type mockUserRepo struct {
 func newMockUserRepo() *mockUserRepo {
 	return &mockUserRepo{
 		users:                  make(map[uint64]*User),
+		deletedUsernames:       make(map[string]struct{}),
 		tokenVersions:          make(map[uint64]uint64),
 		consumedTokens:         make(map[string]bool),
 		nextID:                 1,
@@ -692,8 +683,26 @@ func (m *mockUserRepo) Delete(ctx context.Context, id uint64) error {
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
+	if u, ok := m.users[id]; ok {
+		m.deletedUsernames[u.Username] = struct{}{}
+	}
 	delete(m.users, id)
 	return nil
+}
+
+func (m *mockUserRepo) UsernameExists(ctx context.Context, username string) (bool, error) {
+	if m.findByUsernameErr != nil {
+		return false, m.findByUsernameErr
+	}
+	if _, ok := m.deletedUsernames[username]; ok {
+		return true, nil
+	}
+	for _, u := range m.users {
+		if u.Username == username {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *mockUserRepo) FindByID(ctx context.Context, id uint64, preloads ...string) (*User, error) {
@@ -721,14 +730,13 @@ func (m *mockUserRepo) FindByUsername(ctx context.Context, username string, prel
 	return nil, nil
 }
 
-func (m *mockUserRepo) List(ctx context.Context, opts UserListOptions) ([]*User, int64, error) {
+func (m *mockUserRepo) List(ctx context.Context, opts db.ListOptions) ([]User, int64, error) {
 	if m.listErr != nil {
 		return nil, 0, m.listErr
 	}
-	var res []*User
+	var res []User
 	for _, u := range m.users {
-		cp := *u
-		res = append(res, &cp)
+		res = append(res, *u)
 	}
 	return res, int64(len(res)), nil
 }

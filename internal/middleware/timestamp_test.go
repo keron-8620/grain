@@ -207,9 +207,10 @@ func TestTimestampMiddleware(t *testing.T) {
 				req.Header.Set("X-Nonce", sharedNonce)
 				r.ServeHTTP(w, req)
 
-				if w.Code == http.StatusOK {
+				switch w.Code {
+				case http.StatusOK:
 					successCount.Add(1)
-				} else if w.Code == http.StatusBadRequest {
+				case http.StatusBadRequest:
 					replayBlockedCount.Add(1)
 				}
 			}()

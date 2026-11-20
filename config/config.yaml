@@ -3,8 +3,9 @@
 # 该文件可直接用于本地开发。生产环境请务必：
 #   1. 替换 security.token.private_key 为受控 Secret 中注入的私钥路径；
 #   2. 使用 `grain -migrate` 作为独立部署步骤执行数据库迁移；
-#   3. 按需启用 redis，用于缓存刷新令牌轮换与吊销状态（本项目不支持多实例）；
-#   4. 限制 cors.allow_origins 并开启 security.host_guard。
+#   3. 导入 sql/database.sql 后执行一次 `grain -bootstrap-admin` 生成随机初始口令；
+#   4. 按需启用 redis，用于缓存刷新令牌轮换与吊销状态（本项目不支持多实例）；
+#   5. 限制 cors.allow_origins 并开启 security.host_guard。
 
 server:
   host: "0.0.0.0"

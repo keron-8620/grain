@@ -15,8 +15,8 @@
 
 ## 快速启动
 
-仓库已包含可直接运行的开发配置 `config/config.yaml` 和**仅用于本地开发**的 RSA 私钥
-`config/dev-signing-key.pem`。
+仓库包含可直接运行的开发配置 `config/config.yaml` 和**仅用于本地开发**的 RSA 私钥生成目标
+`make dev-key`（生成 `config/dev-signing-key.pem`，该文件已被 `.gitignore` 忽略）。
 
 ```bash
 # 1. 初始化数据库
@@ -25,12 +25,17 @@ go run . -conf config/config.yaml -migrate
 # 2. 导入sql脚本
 go run . -conf config/config.yaml -exec-sql sql/database.sql
 
-# 3. 启动服务
+# 3. 创建初始管理员（生成一次性随机口令并打印）
+go run . -conf config/config.yaml -bootstrap-admin
+
+# 4. 启动服务
 go run . -conf config/config.yaml
 ```
 
-`sql/database.sql` 会创建默认管理员 `admin / Admin@123456` 并授予全部 API 权限；
-**首次登录后请立即修改密码**。该脚本只应在全新数据库上执行一次。
+`sql/database.sql` 只创建 `admin` 角色与 API 目录，**不再创建任何默认账号**。第一个管理员
+通过 `-bootstrap-admin` 创建：命令生成 24 位随机口令并只打印一次，不会写入日志。服务启动时
+若检测到仍在使用历史默认口令（`Admin@123456`）的账号，会拒绝启动并提示用该命令重置。
+该脚本只应在全新数据库上执行一次。
 
 验证：
 
@@ -44,11 +49,12 @@ curl http://127.0.0.1:8080/.well-known/jwks.json
 
 ## 生产部署前必须修改
 
-1. **替换 JWT 私钥**。`config/dev-signing-key.pem` 是公开的开发密钥，任何拿到仓库的人都能伪造令牌。
-   生成新私钥并配置 `security.token.private_key`：
+1. **替换 JWT 私钥**。仓库不再跟踪开发私钥；本地开发用 `make dev-key` 生成
+   `config/dev-signing-key.pem`（已被 `.gitignore` 忽略）。历史版本中出现过的旧开发密钥按
+   **已泄露**处理，服务启动时会直接拒绝该指纹。生产环境必须使用受控 Secret 注入的私钥：
 
    ```bash
-   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
      -out /secure/path/iam-signing-key.pem
    chmod 600 /secure/path/iam-signing-key.pem
    ```

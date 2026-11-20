@@ -14,13 +14,20 @@ A single-node Go/Gin operations platform: IAM (users, roles, menus, buttons, API
 
 ## Quick start
 
-The repository ships a runnable development config (`config/config.yaml`) and a
-**development-only** RSA key (`config/dev-signing-key.pem`).
+The repository ships a runnable development config (`config/config.yaml`). The development RSA
+key is generated locally with `make dev-key` (writes `config/dev-signing-key.pem`, which is
+git-ignored); no private key is tracked in git.
 
 ```bash
-go run . -conf config/config.yaml -migrate   # schema bootstrap
-go run . -conf config/config.yaml            # start HTTP server
+go run . -conf config/config.yaml -migrate          # schema bootstrap
+go run . -conf config/config.yaml -exec-sql sql/database.sql  # roles + API catalog
+go run . -conf config/config.yaml -bootstrap-admin  # create admin with a one-time random password
+go run . -conf config/config.yaml                   # start HTTP server
 ```
+
+`sql/database.sql` creates the `admin` role and the API catalog only; it no longer seeds any
+account. `-bootstrap-admin` prints a 24-character random password exactly once (never to the
+application log). Startup is refused while any account still uses the historical default password.
 
 ```bash
 curl http://127.0.0.1:8080/livez
@@ -33,10 +40,11 @@ against the config file's directory.
 
 ## Before production
 
-1. Replace `config/dev-signing-key.pem` with a private key injected from a secret store.
-   Never ship the development key.
+1. Replace the development signing key with a private key injected from a secret store.
+   The old development key is treated as leaked and is rejected by fingerprint at startup.
 2. Run `grain -conf ... -migrate` as a separate deployment step.
-   Use `-exec-sql /path/to/file.sql` for additional SQL.
+   Use `-exec-sql /path/to/file.sql` for additional SQL, then `-bootstrap-admin` once to create
+   the administrator with a random password.
 3. Optionally enable Redis. Redis can hold the token-version hot cache and refresh-token
    rotation/family revocation state so it survives restarts; the database remains the
    authoritative revocation baseline. Redis does not enable multi-instance deployment.
@@ -80,9 +88,9 @@ is why multi-instance deployment is not supported.
 - `security.token.refresh_method` must currently match `access_method`; access and refresh
   tokens share the same signing algorithm and key.
 
-`sql/database.sql` seeds the default administrator `admin / Admin@123456` and grants all API
-permissions. Change the password immediately after the first login; run the script only once on a
-fresh database.
+`sql/database.sql` creates the `admin` role and API catalog without seeding any account. Run
+`grain -bootstrap-admin` once to create the administrator with a one-time random password; run the
+script only once on a fresh database.
 
 ## Scripts, schedules and hosts
 

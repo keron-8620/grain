@@ -33,6 +33,7 @@ import (
 	"gorm.io/gorm"
 
 	"grain/docs"
+	biziam "grain/internal/biz/iam"
 	"grain/internal/conf"
 	datacmdb "grain/internal/data/cmdb"
 	dataiam "grain/internal/data/iam"
@@ -55,10 +56,12 @@ var (
 	goOS      string
 	goArch    string
 
-	flagconf    string
-	showVersion bool
-	migrateOnly bool
-	execSqlPath string
+	flagconf       string
+	showVersion    bool
+	migrateOnly    bool
+	execSqlPath    string
+	bootstrapAdmin bool
+	bootstrapUser  string
 )
 
 func init() {
@@ -66,6 +69,8 @@ func init() {
 	flag.BoolVar(&showVersion, "v", false, "print version information and exit")
 	flag.BoolVar(&migrateOnly, "migrate", false, "apply IAM schema migrations and exit (production schema bootstrap)")
 	flag.StringVar(&execSqlPath, "exec-sql", "", "execute an SQL file and exit")
+	flag.BoolVar(&bootstrapAdmin, "bootstrap-admin", false, "create (or reset the leaked default of) the initial admin account with a random password and exit")
+	flag.StringVar(&bootstrapUser, "bootstrap-admin-user", "admin", "username to create with -bootstrap-admin")
 }
 
 // @title grain API
@@ -148,8 +153,8 @@ func run() error {
 		}
 	}()
 
-	// 迁移模式：建表、可选执行 SQL，然后退出，不启动 HTTP 服务。
-	if migrateOnly || execSqlPath != "" {
+	// 迁移 / 初始化模式：建表、执行 SQL、创建初始管理员，然后退出，不启动 HTTP 服务。
+	if migrateOnly || execSqlPath != "" || bootstrapAdmin {
 		if migrateOnly {
 			if err := dataiam.AutoMigrate(gormDB); err != nil {
 				return fmt.Errorf("iam 数据库迁移失败: %w", err)
@@ -168,7 +173,20 @@ func run() error {
 			}
 			logger.Info("SQL 文件执行完成", slog.String("path", execSqlPath))
 		}
+		if bootstrapAdmin {
+			if err := runBootstrapAdmin(ctx, bc, gormDB, logger); err != nil {
+				return err
+			}
+		}
 		return nil
+	}
+
+	// 拒绝以泄露的默认管理员口令启动，避免按旧文档初始化的实例带病上线。
+	if legacyAccounts, legacyErr := dataiam.LegacyDefaultAdminAccounts(ctx, gormDB); legacyErr != nil {
+		logger.Warn("检查默认管理员口令失败", slog.Any("error", legacyErr))
+	} else if len(legacyAccounts) > 0 {
+		return fmt.Errorf("检测到以下账号仍在使用已泄露的默认口令：%s；服务已拒绝启动。请执行 `grain -conf %s -bootstrap-admin -bootstrap-admin-user <账号>` 重置为一次性随机口令",
+			strings.Join(legacyAccounts, ", "), flagconf)
 	}
 
 	var redisClient redis.UniversalClient
@@ -320,6 +338,59 @@ func run() error {
 	}
 
 	logger.Info("服务器已退出")
+	return nil
+}
+
+// runBootstrapAdmin creates the initial administrator account with a random
+// password. The password is printed exactly once to stdout and is never written
+// to the application log, so log collectors cannot retain it.
+func runBootstrapAdmin(ctx context.Context, bc *conf.Bootstrap, gormDB *gorm.DB, logger *slog.Logger) error {
+	if bc == nil || bc.IAM == nil {
+		return fmt.Errorf("IAM 配置不完整，无法创建初始管理员")
+	}
+
+	policy := biziam.PasswordPolicy{StrengthLevel: bc.IAM.Password.StrengthLevel}
+	if err := policy.ValidateLevel(); err != nil {
+		return fmt.Errorf("密码策略配置无效: %w", err)
+	}
+
+	password, err := cryptoutil.GeneratePassword(24)
+	if err != nil {
+		return fmt.Errorf("生成随机口令失败: %w", err)
+	}
+	if err := policy.Validate(password); err != nil {
+		return fmt.Errorf("生成的随机口令未满足当前密码策略: %w", err)
+	}
+
+	hasher := cryptoutil.NewBcryptHasher(0)
+	hash, err := hasher.HashString(password)
+	if err != nil {
+		return fmt.Errorf("计算口令哈希失败: %w", err)
+	}
+
+	username := strings.TrimSpace(bootstrapUser)
+	action, err := dataiam.BootstrapAdmin(ctx, gormDB, username, hash)
+	if err != nil {
+		return err
+	}
+
+	logger.Info("初始管理员初始化完成",
+		slog.String("username", username),
+		slog.String("action", string(action)),
+	)
+
+	fmt.Println()
+	fmt.Println("==================== 管理员初始化 ====================")
+	if action == dataiam.BootstrapReset {
+		fmt.Println("已重置仍在使用旧默认口令的管理员账号")
+	} else {
+		fmt.Println("已创建初始管理员账号")
+	}
+	fmt.Printf("用户名: %s\n", username)
+	fmt.Printf("初始口令: %s\n", password)
+	fmt.Println("该口令仅显示这一次，请立即登录并修改；不要写入脚本或提交到仓库。")
+	fmt.Println("======================================================")
+	fmt.Println()
 	return nil
 }
 

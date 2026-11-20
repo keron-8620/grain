@@ -3,12 +3,12 @@
 -- 使用顺序：
 --   1) grain -conf config/config.yaml -migrate          # 建表
 --   2) grain -conf config/config.yaml -exec-sql sql/database.sql
---   3) grain -conf config/config.yaml                  # 启动服务
---
--- 默认管理员：admin / Admin@123456
---   ！！首次登录后请立即修改密码，或在导入前替换下面的 bcrypt 哈希。
+--   3) grain -conf config/config.yaml -bootstrap-admin  # 生成一次性随机口令并打印
+--   4) grain -conf config/config.yaml                   # 启动服务
 --
 -- 说明：
+--   * 本文件不创建任何默认账号。初始管理员必须通过 -bootstrap-admin 创建；
+--     该命令生成随机口令且只打印一次，服务启动时会拒绝仍使用历史默认口令的账号。
 --   * 本文件只应在全新的数据库上执行一次；重复执行会因唯一索引冲突而失败。
 --   * 脚本给 admin 角色授予当前全部 API 权限；后续新增的路由需在角色管理中补授权。
 --   * 兼容 SQLite / MySQL / PostgreSQL。SQL Server 不支持 TRUE 字面量，需改为 1。
@@ -18,11 +18,6 @@
 
 INSERT INTO iam_role (name, descr, created_at, updated_at)
 VALUES ('admin', '超级管理员', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
-
-INSERT INTO iam_user (username, password, is_active, role_id, token_version, created_at, updated_at)
-SELECT 'admin', '$2a$10$Z1dAGgfFqHnO5c1ZjKuO5.vD3VKS6XDK4ujaWPexdQfL2B54926oq', TRUE,
-       r.id, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-FROM iam_role r WHERE r.name = 'admin';
 
 INSERT INTO iam_api (url, method, label, descr, created_at, updated_at) VALUES
 ('/api/v1/apis', 'GET', '/api/v1/apis', 'grain/internal/service/iam.(*Service).ListApis-fm', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),

@@ -29,6 +29,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 
+	"grain/internal/biz/common"
+	"grain/internal/conf"
 	"grain/pkg/db"
 	"grain/pkg/errorx"
 )
@@ -355,9 +357,9 @@ func TestHostUseCase_Create(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(1), created.ID)
-		assert.Equal(t, protocolSSH, created.Protocol)
+		assert.Equal(t, common.ProtocolSSH, created.Protocol)
 		assert.Equal(t, uint16(defaultSSHPort), created.HostPort)
-		assert.Equal(t, osTypeLinux, created.OSType)
+		assert.Equal(t, common.OsTypeLinux, created.OSType)
 	})
 
 	t.Run("duplicate host connection rejected", func(t *testing.T) {
@@ -380,8 +382,8 @@ func TestHostUseCase_Create(t *testing.T) {
 			Name:     "win-bad-proto",
 			HostIP:   "10.0.0.2",
 			HostUser: "Administrator",
-			Protocol: protocolSSH,
-			OSType:   osTypeWindows,
+			Protocol: common.ProtocolSSH,
+			OSType:   common.OsTypeWindows,
 		})
 		require.Error(t, err)
 		assert.True(t, errorx.IsCode(err, errorx.CodeInvalidParam))
@@ -397,12 +399,12 @@ func TestHostUseCase_Create(t *testing.T) {
 			Name:     "win-node-1",
 			HostIP:   "10.0.0.2",
 			HostUser: "Administrator",
-			Protocol: protocolWinRM,
+			Protocol: common.ProtocolWinRM,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, protocolWinRM, created.Protocol)
+		assert.Equal(t, common.ProtocolWinRM, created.Protocol)
 		assert.Equal(t, uint16(defaultWinRMPort), created.HostPort)
-		assert.Equal(t, osTypeWindows, created.OSType)
+		assert.Equal(t, common.OsTypeWindows, created.OSType)
 	})
 
 	t.Run("ssh onboarding deploys deduplicated keys and persists host", func(t *testing.T) {
@@ -422,6 +424,19 @@ func TestHostUseCase_Create(t *testing.T) {
 		require.Len(t, *cmds, 1)
 		assert.Contains(t, (*cmds)[0], authLine)
 		assert.Equal(t, 2, strings.Count((*cmds)[0], authLine))
+
+		// Onboarding pins the server host key for later verification.
+		expectedHostKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
+		assert.Equal(t, expectedHostKey, created.HostKey)
+		stored, err := repo.FindByID(ctx, created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, expectedHostKey, stored.HostKey)
+
+		// Re-pinning an existing host (rebuild/key rotation) succeeds and keeps
+		// the same key.
+		refreshed, err := uc.RefreshHostKey(ctx, created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, expectedHostKey, refreshed.HostKey)
 	})
 
 	t.Run("ssh onboarding failure does not persist host", func(t *testing.T) {
@@ -517,11 +532,11 @@ func TestHostUseCase_Create(t *testing.T) {
 			HostIP:   hostStr,
 			HostPort: uint16(portNum),
 			HostUser: "Administrator",
-			Protocol: protocolWinRM,
+			Protocol: common.ProtocolWinRM,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, uint64(1), created.ID)
-		assert.Equal(t, osTypeWindows, created.OSType)
+		assert.Equal(t, common.OsTypeWindows, created.OSType)
 	})
 
 	t.Run("winrm invalid cert config returns config error", func(t *testing.T) {
@@ -535,7 +550,7 @@ func TestHostUseCase_Create(t *testing.T) {
 			Name:     "win-bad-cert",
 			HostIP:   "10.0.0.3",
 			HostUser: "Administrator",
-			Protocol: protocolWinRM,
+			Protocol: common.ProtocolWinRM,
 		})
 		require.Error(t, err)
 		assert.True(t, errorx.IsCode(err, errorx.CodeConfigError))
@@ -606,4 +621,199 @@ func TestHostUseCase_UpdateDeleteGetList(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, errorx.IsCode(err, errorx.CodeRecordNotFound))
 	})
+}
+
+func setCMDBHostVarsStorage(t *testing.T) string {
+	t.Helper()
+
+	oldStorageDir := conf.StorageDir
+	conf.StorageDir = t.TempDir()
+	t.Cleanup(func() { conf.StorageDir = oldStorageDir })
+	return conf.StorageDir
+}
+
+func TestHostUseCase_AnsibleHostVarsLifecycle(t *testing.T) {
+	setCMDBHostVarsStorage(t)
+	ctx := context.Background()
+
+	repo := newMockHostRepo()
+	uc := NewHostUseCase(repo, nil, time.Second, nil, nil)
+
+	created, err := uc.Create(ctx, &Host{
+		Name:     "node-1",
+		HostIP:   "10.1.2.3",
+		HostUser: "ansible",
+		PyPath:   "/usr/bin/python3",
+	})
+	require.NoError(t, err)
+
+	vars, _, err := common.LoadAnsibleHostVars(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, vars.HostID)
+	assert.Equal(t, "10.1.2.3", vars.AnsibleHost)
+	assert.Equal(t, uint16(defaultSSHPort), vars.AnsiblePort)
+	assert.Equal(t, "ansible", vars.AnsibleUser)
+	assert.Equal(t, common.ProtocolSSH, vars.AnsibleConnection)
+	assert.Equal(t, "/usr/bin/python3", vars.AnsiblePythonInterpreter)
+	assert.Equal(t, common.OsTypeLinux, vars.AnsibleOSFamily)
+	assert.Equal(t, "sh", vars.AnsibleShellType)
+
+	info, err := os.Stat(common.AnsibleHostVarPath(created.ID))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	created.PyPath = "/usr/bin/python3.12"
+	created.HostUser = "ansible-2"
+	_, err = uc.Update(ctx, created)
+	require.NoError(t, err)
+
+	vars, _, err = common.LoadAnsibleHostVars(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "ansible-2", vars.AnsibleUser)
+	assert.Equal(t, "/usr/bin/python3.12", vars.AnsiblePythonInterpreter)
+
+	require.NoError(t, uc.Delete(ctx, created.ID))
+	_, err = os.Stat(common.AnsibleHostVarPath(created.ID))
+	assert.True(t, os.IsNotExist(err))
+}
+
+func TestHostUseCase_BuildAnsibleHostVars_SSH(t *testing.T) {
+	uc := NewHostUseCase(newMockHostRepo(), nil, time.Second, nil, nil,
+		WithSSHPrivateKeyPath("/etc/grain/ssh/id_ed25519"))
+
+	vars, err := uc.buildAnsibleHostVars(&Host{
+		ID:       8,
+		HostIP:   "10.0.0.8",
+		HostPort: 22,
+		HostUser: "deploy",
+		Protocol: common.ProtocolSSH,
+		OSType:   common.OsTypeLinux,
+		HostKey:  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "/etc/grain/ssh/id_ed25519", vars.AnsibleSSHPrivateKeyFile)
+	assert.Equal(t, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey", vars.AnsibleSSHHostKey)
+	assert.Empty(t, vars.AnsiblePassword, "host vars must never contain a password")
+	assert.Empty(t, vars.AnsibleWinRMCertPEM)
+}
+
+func TestHostUseCase_BuildAnsibleHostVars_WinRM(t *testing.T) {
+	_, certPath, keyPath := generateTestWinRMCerts(t)
+	uc := NewHostUseCase(newMockHostRepo(), nil, time.Second, nil, nil, WithWinRMConfig(WinRMConfig{
+		UseTLS:         true,
+		Insecure:       true,
+		ClientCertPath: certPath,
+		ClientKeyPath:  keyPath,
+	}))
+
+	vars, err := uc.buildAnsibleHostVars(&Host{
+		ID:       9,
+		HostIP:   "10.0.0.9",
+		HostPort: defaultWinRMHTTPSPort,
+		HostUser: "Administrator",
+		Protocol: common.ProtocolWinRM,
+		OSType:   common.OsTypeWindows,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint64(9), vars.HostID)
+	assert.Equal(t, common.ProtocolWinRM, vars.AnsibleConnection)
+	assert.Equal(t, "https", vars.AnsibleWinRMScheme)
+	assert.Equal(t, "ignore", vars.AnsibleWinRMCertValidate)
+	assert.Equal(t, "cert", vars.AnsibleWinRMTransport)
+	assert.Equal(t, "powershell", vars.AnsibleShellType)
+
+	assert.Equal(t, certPath, vars.AnsibleWinRMCertPath)
+	assert.Equal(t, keyPath, vars.AnsibleWinRMKeyPath)
+	assert.Empty(t, vars.AnsibleWinRMCertPEM, "host vars must not embed certificate material")
+	assert.Empty(t, vars.AnsibleWinRMCertKeyPEM, "host vars must not embed private key material")
+	assert.Empty(t, vars.AnsiblePassword, "host vars must never contain a password")
+}
+
+func TestHostUseCase_AnsibleHostVarsExportFailureRollsBack(t *testing.T) {
+	ctx := context.Background()
+
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o600))
+
+	oldStorageDir := conf.StorageDir
+	conf.StorageDir = blocker
+	t.Cleanup(func() { conf.StorageDir = oldStorageDir })
+
+	repo := newMockHostRepo()
+	uc := NewHostUseCase(repo, nil, time.Second, nil, nil)
+
+	_, err := uc.Create(ctx, &Host{Name: "no-cache", HostIP: "10.0.0.10", HostUser: "root"})
+	require.Error(t, err)
+	assert.True(t, errorx.IsCode(err, errorx.CodeExternalError))
+
+	hosts, total, listErr := repo.List(ctx, db.ListOptions{})
+	require.NoError(t, listErr)
+	assert.Zero(t, total)
+	assert.Empty(t, hosts)
+}
+
+func TestHostVarsNeverContainSecrets(t *testing.T) {
+	oldStorage := conf.StorageDir
+	conf.StorageDir = t.TempDir()
+	t.Cleanup(func() { conf.StorageDir = oldStorage })
+
+	uc := NewHostUseCase(newMockHostRepo(), nil, time.Second, nil, nil,
+		WithSSHPrivateKeyPath("/etc/grain/id_ed25519"))
+
+	host := &Host{
+		ID:       77,
+		HostIP:   "10.0.0.77",
+		HostPort: 22,
+		HostUser: "deploy",
+		Protocol: common.ProtocolSSH,
+		OSType:   common.OsTypeLinux,
+		HostKey:  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey",
+	}
+	require.NoError(t, uc.syncAnsibleHostVars(context.Background(), host))
+
+	data, err := os.ReadFile(common.AnsibleHostVarPath(77))
+	require.NoError(t, err)
+	body := string(data)
+	assert.Contains(t, body, "/etc/grain/id_ed25519")
+	assert.Contains(t, body, "ssh-ed25519")
+	assert.NotContains(t, body, "ansible_password")
+	assert.NotContains(t, body, "PRIVATE KEY")
+}
+
+func TestHostUseCase_ResyncHostVarsRemovesLegacySecrets(t *testing.T) {
+	oldStorage := conf.StorageDir
+	conf.StorageDir = t.TempDir()
+	t.Cleanup(func() { conf.StorageDir = oldStorage })
+
+	repo := newMockHostRepo()
+	host, err := repo.Create(context.Background(), &Host{
+		Name:     "legacy",
+		HostIP:   "10.0.0.90",
+		HostPort: 22,
+		HostUser: "deploy",
+		Protocol: common.ProtocolSSH,
+		OSType:   common.OsTypeLinux,
+	})
+	require.NoError(t, err)
+
+	legacy := "host_id: 1\nansible_host: 10.0.0.90\nansible_user: deploy\n" +
+		"ansible_password: legacy-secret\nansible_winrm_cert_pem: '-----BEGIN CERTIFICATE-----'\n" +
+		"ansible_winrm_cert_key_pem: '-----BEGIN PRIVATE KEY-----'\n"
+	legacyPath := common.AnsibleHostVarPath(host.ID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(legacyPath), 0o700))
+	require.NoError(t, os.WriteFile(legacyPath, []byte(legacy), 0o600))
+
+	uc := NewHostUseCase(repo, nil, time.Second, nil, nil,
+		WithSSHPrivateKeyPath("/etc/grain/id_ed25519"))
+	n, err := uc.ResyncHostVars(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	data, err := os.ReadFile(common.AnsibleHostVarPath(host.ID))
+	require.NoError(t, err)
+	body := string(data)
+	assert.NotContains(t, body, "ansible_password")
+	assert.NotContains(t, body, "PRIVATE KEY")
+	assert.NotContains(t, body, "BEGIN CERTIFICATE")
+	assert.Contains(t, body, "/etc/grain/id_ed25519")
 }

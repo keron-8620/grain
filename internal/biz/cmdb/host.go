@@ -12,38 +12,36 @@ import (
 	"strings"
 	"time"
 
-	"github.com/masterzen/winrm"
 	"golang.org/x/crypto/ssh"
 
+	"grain/internal/biz/common"
 	"grain/pkg/db"
 	"grain/pkg/errorx"
+	"grain/pkg/remote"
 )
 
 const (
-	protocolSSH   = "ssh"
-	protocolWinRM = "winrm"
-
-	osTypeLinux   = "linux"
-	osTypeWindows = "windows"
-
 	defaultSSHTimeout     = 15 * time.Second
-	defaultSSHPort        = 22
-	defaultWinRMPort      = 5985
-	defaultWinRMHTTPSPort = 5986
+	defaultSSHPort        = remote.DefaultSSHPort
+	defaultWinRMPort      = remote.DefaultWinRMHTTPPort
+	defaultWinRMHTTPSPort = remote.DefaultWinRMHTTPSPort
 )
 
 // Host is the host domain model (Domain Object - DO).
 type Host struct {
-	ID        uint64
-	Name      string
-	Label     string
-	HostIP    string
-	HostPort  uint16
-	HostUser  string
-	Protocol  string
-	PyPath    string
-	Remark    string
-	OSType    string
+	ID       uint64
+	Name     string
+	Label    string
+	HostIP   string
+	HostPort uint16
+	HostUser string
+	Protocol string
+	PyPath   string
+	Remark   string
+	OSType   string
+	// HostKey is the pinned SSH server host key (authorized_keys format). It is
+	// captured during onboarding and verified on every later connection.
+	HostKey   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -71,6 +69,14 @@ type WinRMConfig struct {
 // HostUseCaseOption configures optional dependencies or protocol settings on HostUseCase.
 type HostUseCaseOption func(*HostUseCase)
 
+// WithSSHPrivateKeyPath pins the private key used for passwordless SSH
+// execution. The path (not the key material) is exported in host_vars.
+func WithSSHPrivateKeyPath(path string) HostUseCaseOption {
+	return func(uc *HostUseCase) {
+		uc.sshPrivateKeyPath = strings.TrimSpace(path)
+	}
+}
+
 // WithWinRMConfig sets the WinRM connection and client certificate configuration.
 func WithWinRMConfig(cfg WinRMConfig) HostUseCaseOption {
 	return func(uc *HostUseCase) {
@@ -90,11 +96,12 @@ func WithWinRMConfig(cfg WinRMConfig) HostUseCaseOption {
 // the configured public keys or verifying connectivity so that later operations
 // can run passwordless.
 type HostUseCase struct {
-	repo       HostRepo
-	logger     *slog.Logger
-	sshTimeout time.Duration
-	authMethod ssh.AuthMethod
-	pubKeyB64s []string
+	repo              HostRepo
+	logger            *slog.Logger
+	sshTimeout        time.Duration
+	authMethod        ssh.AuthMethod
+	pubKeyB64s        []string
+	sshPrivateKeyPath string
 
 	winrmUseTLS         bool
 	winrmInsecure       bool
@@ -161,6 +168,10 @@ func (uc *HostUseCase) Create(ctx context.Context, host *Host) (*Host, error) {
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
+	if err := uc.syncAnsibleHostVars(ctx, created); err != nil {
+		uc.rollbackCreatedHost(ctx, created.ID)
+		return nil, err
+	}
 	return created, nil
 }
 
@@ -204,6 +215,16 @@ func (uc *HostUseCase) Update(ctx context.Context, host *Host) (*Host, error) {
 	if err != nil {
 		return nil, errorx.FromDBError(err)
 	}
+	if err := uc.syncAnsibleHostVars(ctx, updated); err != nil {
+		// Restore the previous record so the cache and database stay aligned.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, rbErr := uc.repo.Update(cleanupCtx, oldHost); rbErr != nil {
+			uc.logger.ErrorContext(cleanupCtx, "failed to restore host after ansible vars export failure",
+				slog.Uint64("host_id", host.ID), slog.Any("error", rbErr))
+		}
+		return nil, err
+	}
 	return updated, nil
 }
 
@@ -215,6 +236,141 @@ func connectionSettingsChanged(oldHost, newHost *Host) bool {
 		oldHost.HostUser != newHost.HostUser ||
 		oldHost.Protocol != newHost.Protocol ||
 		oldHost.OSType != newHost.OSType
+}
+
+// syncAnsibleHostVars writes the host vars cache consumed by remote script
+// execution. The cache is regenerated after every successful create/update.
+func (uc *HostUseCase) syncAnsibleHostVars(ctx context.Context, host *Host) error {
+	if host == nil || host.ID == 0 {
+		return errorx.CodeInvalidParam.Error("无效的主机信息")
+	}
+
+	vars, err := uc.buildAnsibleHostVars(host)
+	if err != nil {
+		return err
+	}
+	if _, err := common.DumpAnsibleHostVars(ctx, vars); err != nil {
+		return errorx.Wrap(err, errorx.CodeExternalError, "导出Ansible主机变量失败")
+	}
+
+	uc.logger.DebugContext(ctx, "ansible host vars exported",
+		slog.Uint64("host_id", host.ID),
+		slog.String("path", common.AnsibleHostVarPath(host.ID)),
+	)
+	return nil
+}
+
+// buildAnsibleHostVars maps the host domain model and onboarding settings onto
+// the Ansible host variable schema.
+func (uc *HostUseCase) buildAnsibleHostVars(host *Host) (*common.AnsibleHostVars, error) {
+	vars := &common.AnsibleHostVars{
+		HostID:                   host.ID,
+		AnsibleHost:              host.HostIP,
+		AnsiblePort:              host.HostPort,
+		AnsibleUser:              host.HostUser,
+		AnsibleConnection:        host.Protocol,
+		AnsiblePythonInterpreter: host.PyPath,
+		AnsibleOSFamily:          host.OSType,
+	}
+	if host.OSType == common.OsTypeWindows {
+		vars.AnsibleShellType = "powershell"
+	} else {
+		vars.AnsibleShellType = "sh"
+	}
+	if host.Protocol == common.ProtocolSSH {
+		vars.AnsibleSSHHostKey = host.HostKey
+		// Export the key path, never key material. Remote execution is
+		// passwordless and reuses this key.
+		vars.AnsibleSSHPrivateKeyFile = uc.sshPrivateKeyPath
+	}
+
+	if host.Protocol != common.ProtocolWinRM {
+		return vars, nil
+	}
+
+	if uc.winrmUseTLS {
+		vars.AnsibleWinRMScheme = "https"
+	} else {
+		vars.AnsibleWinRMScheme = "http"
+	}
+	if uc.winrmInsecure {
+		vars.AnsibleWinRMCertValidate = "ignore"
+	} else {
+		vars.AnsibleWinRMCertValidate = "validate"
+	}
+
+	// Certificate authentication is the only credential source available to the
+	// onboarding layer. Export paths only: host_vars must not contain secrets.
+	if uc.winrmClientCertPath == "" && uc.winrmClientKeyPath == "" {
+		return vars, nil
+	}
+	if uc.winrmClientCertPath == "" || uc.winrmClientKeyPath == "" {
+		return nil, errorx.CodeConfigError.Error("WinRM 客户端证书与私钥路径必须同时配置")
+	}
+
+	vars.AnsibleWinRMTransport = "cert"
+	vars.AnsibleWinRMCertPath = uc.winrmClientCertPath
+	vars.AnsibleWinRMKeyPath = uc.winrmClientKeyPath
+	return vars, nil
+}
+
+// rollbackCreatedHost removes a persisted host when its cache file could not be
+// written, keeping the database and cache aligned.
+func (uc *HostUseCase) rollbackCreatedHost(ctx context.Context, id uint64) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	if err := uc.repo.Delete(cleanupCtx, id); err != nil {
+		uc.logger.ErrorContext(cleanupCtx, "failed to roll back host after ansible vars export failure",
+			slog.Uint64("host_id", id), slog.Any("error", err))
+	}
+}
+
+// RefreshHostKey re-runs SSH onboarding for an existing host, re-pinning its
+// server host key. It is the supported recovery path after a host rebuild or
+// key rotation (normal updates only re-onboard when connection settings change).
+func (uc *HostUseCase) RefreshHostKey(ctx context.Context, id uint64) (*Host, error) {
+	if id == 0 {
+		return nil, errorx.CodeInvalidParam.Error("无效的主机ID")
+	}
+	if uc.authMethod == nil {
+		return nil, errorx.CodeConfigError.Error("未配置 SSH 接入凭据，无法采集主机密钥")
+	}
+
+	host, err := uc.repo.FindByID(ctx, id)
+	if err != nil {
+		return nil, errorx.FromDBError(err)
+	}
+	if host == nil {
+		return nil, errorx.CodeRecordNotFound.Error("主机不存在")
+	}
+	if err := uc.applyDefaults(host); err != nil {
+		return nil, err
+	}
+	if host.Protocol != common.ProtocolSSH {
+		return nil, errorx.CodeProtocolUnsupported.Errorf("仅 SSH 主机支持刷新主机密钥")
+	}
+
+	oldKey := host.HostKey
+	if err := uc.deploySSHKey(ctx, host); err != nil {
+		return nil, err
+	}
+
+	updated, err := uc.repo.Update(ctx, host)
+	if err != nil {
+		return nil, errorx.FromDBError(err)
+	}
+	if err := uc.syncAnsibleHostVars(ctx, updated); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		host.HostKey = oldKey
+		if _, rbErr := uc.repo.Update(cleanupCtx, host); rbErr != nil {
+			uc.logger.ErrorContext(cleanupCtx, "failed to restore host key after ansible vars export failure",
+				slog.Uint64("host_id", id), slog.Any("error", rbErr))
+		}
+		return nil, err
+	}
+	return updated, nil
 }
 
 // Delete removes a host by ID.
@@ -233,6 +389,10 @@ func (uc *HostUseCase) Delete(ctx context.Context, id uint64) error {
 
 	if err := uc.repo.Delete(ctx, id); err != nil {
 		return errorx.FromDBError(err)
+	}
+	if err := os.Remove(common.AnsibleHostVarPath(id)); err != nil && !os.IsNotExist(err) {
+		uc.logger.WarnContext(ctx, "failed to remove ansible host vars cache",
+			slog.Uint64("host_id", id), slog.Any("error", err))
 	}
 	return nil
 }
@@ -274,6 +434,41 @@ func (uc *HostUseCase) List(ctx context.Context, opts db.ListOptions) ([]Host, i
 	return hosts, total, nil
 }
 
+// ResyncHostVars rewrites every managed host's ansible vars from the database
+// and current configuration. It removes legacy secrets (passwords or inline
+// PEMs) left in host_vars by older versions.
+func (uc *HostUseCase) ResyncHostVars(ctx context.Context) (int, error) {
+	const pageSize = 100
+
+	offset, synced := 0, 0
+	var firstErr error
+	for {
+		hosts, total, err := uc.repo.List(ctx, db.ListOptions{Offset: offset, PageSize: pageSize})
+		if err != nil {
+			return synced, errorx.FromDBError(err)
+		}
+		for i := range hosts {
+			if err := uc.syncAnsibleHostVars(ctx, &hosts[i]); err != nil {
+				uc.logger.WarnContext(ctx, "rewrite ansible host vars failed",
+					slog.Uint64("host_id", hosts[i].ID), slog.Any("error", err))
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			synced++
+		}
+		offset += len(hosts)
+		if len(hosts) == 0 || int64(offset) >= total {
+			break
+		}
+	}
+	if synced > 0 {
+		uc.logger.InfoContext(ctx, "ansible host vars resynced", slog.Int("count", synced))
+	}
+	return synced, firstErr
+}
+
 // applyDefaults normalizes user input and fills protocol-specific defaults.
 func (uc *HostUseCase) applyDefaults(host *Host) error {
 	host.Name = strings.TrimSpace(host.Name)
@@ -293,14 +488,14 @@ func (uc *HostUseCase) applyDefaults(host *Host) error {
 	}
 
 	if host.Protocol == "" {
-		host.Protocol = protocolSSH
+		host.Protocol = common.ProtocolSSH
 	}
 	switch host.Protocol {
-	case protocolSSH:
+	case common.ProtocolSSH:
 		if host.HostPort == 0 {
 			host.HostPort = defaultSSHPort
 		}
-	case protocolWinRM:
+	case common.ProtocolWinRM:
 		if host.HostPort == 0 {
 			if uc.winrmUseTLS {
 				host.HostPort = defaultWinRMHTTPSPort
@@ -309,14 +504,14 @@ func (uc *HostUseCase) applyDefaults(host *Host) error {
 			}
 		}
 		if host.OSType == "" {
-			host.OSType = osTypeWindows
+			host.OSType = common.OsTypeWindows
 		}
 	default:
 		return errorx.CodeProtocolUnsupported.Error("不支持的连接协议: " + host.Protocol)
 	}
 
 	if host.OSType == "" {
-		host.OSType = osTypeLinux
+		host.OSType = common.OsTypeLinux
 	}
 	return nil
 }
@@ -324,9 +519,9 @@ func (uc *HostUseCase) applyDefaults(host *Host) error {
 // deployPasswordlessKey dispatches protocol-specific passwordless onboarding.
 func (uc *HostUseCase) deployPasswordlessKey(ctx context.Context, host *Host) error {
 	switch host.Protocol {
-	case protocolSSH:
+	case common.ProtocolSSH:
 		return uc.deploySSHKey(ctx, host)
-	case protocolWinRM:
+	case common.ProtocolWinRM:
 		return uc.verifyWinRMConnection(ctx, host)
 	default:
 		return errorx.CodeProtocolUnsupported.Error("不支持的连接协议: " + host.Protocol)
@@ -334,27 +529,33 @@ func (uc *HostUseCase) deployPasswordlessKey(ctx context.Context, host *Host) er
 }
 
 func (uc *HostUseCase) deploySSHKey(ctx context.Context, host *Host) error {
-	if host.OSType == osTypeWindows {
-		return errorx.CodeInvalidParam.Errorf("windows机器不支持%s, 请使用%s", protocolSSH, protocolWinRM)
+	if host.OSType == common.OsTypeWindows {
+		return errorx.CodeInvalidParam.Errorf("windows机器不支持%s, 请使用%s", common.ProtocolSSH, common.ProtocolWinRM)
 	}
 
-	if len(uc.pubKeyB64s) == 0 {
-		uc.logger.WarnContext(ctx, "no SSH public keys configured, skipping passwordless key deployment",
+	if uc.authMethod == nil {
+		if len(uc.pubKeyB64s) > 0 {
+			return errorx.CodeConfigError.Error("未配置 SSH 认证方式，无法部署免密公钥")
+		}
+		uc.logger.WarnContext(ctx, "no SSH onboarding credential configured, skipping host key capture",
 			slog.String("host_ip", host.HostIP), slog.Uint64("host_port", uint64(host.HostPort)))
 		return nil
 	}
 
-	if uc.authMethod == nil {
-		return errorx.CodeConfigError.Error("未配置 SSH 认证方式，无法部署免密公钥")
-	}
-
-	keys, err := normalizeAuthorizedKeys(uc.pubKeyB64s)
-	if err != nil {
-		return errorx.Wrap(err, errorx.CodeConfigError, "SSH免密公钥配置无效")
+	var keys []string
+	if len(uc.pubKeyB64s) > 0 {
+		var err error
+		keys, err = normalizeAuthorizedKeys(uc.pubKeyB64s)
+		if err != nil {
+			return errorx.Wrap(err, errorx.CodeConfigError, "SSH免密公钥配置无效")
+		}
 	}
 
 	addr := net.JoinHostPort(host.HostIP, strconv.Itoa(int(host.HostPort)))
-	client, err := uc.dialSSH(ctx, addr, host.HostUser)
+	// Onboarding uses trust-on-first-use: accept and pin the host key. Later
+	// executions verify against the pinned value (see executeSSH).
+	var captured ssh.PublicKey
+	client, err := uc.dialSSH(ctx, addr, host.HostUser, remote.CaptureHostKey(&captured))
 	if err != nil {
 		return err
 	}
@@ -365,89 +566,49 @@ func (uc *HostUseCase) deploySSHKey(ctx context.Context, host *Host) error {
 		}
 	}()
 
-	session, err := client.NewSession()
-	if err != nil {
-		return errorx.Wrap(err, errorx.CodeSSHKeyDeployFailed, fmt.Sprintf("创建SSH会话失败: %s", addr))
-	}
-	defer func() {
-		if closeErr := session.Close(); closeErr != nil {
-			uc.logger.DebugContext(ctx, "failed to close SSH session", slog.String("addr", addr), slog.Any("error", closeErr))
+	if len(keys) > 0 {
+		output, err := uc.runCommand(ctx, client, authorizedKeysScript(keys))
+		if err != nil {
+			msg := fmt.Sprintf("部署免密公钥失败: %s", addr)
+			if detail := strings.TrimSpace(string(output)); detail != "" {
+				msg += ": " + truncate(detail, 512)
+			}
+			return errorx.Wrap(err, errorx.CodeSSHKeyDeployFailed, msg)
 		}
-	}()
-
-	output, err := uc.runCommand(ctx, session, authorizedKeysScript(keys))
-	if err != nil {
-		msg := fmt.Sprintf("部署免密公钥失败: %s", addr)
-		if detail := strings.TrimSpace(string(output)); detail != "" {
-			msg += ": " + truncate(detail, 512)
-		}
-		return errorx.Wrap(err, errorx.CodeSSHKeyDeployFailed, msg)
 	}
 
-	uc.logger.InfoContext(ctx, "passwordless key deployed",
+	if captured == nil {
+		return errorx.CodeSSHConnectionFailed.Errorf("未获取到主机 %s 的 SSH 公钥", addr)
+	}
+	host.HostKey = remote.MarshalHostKey(captured)
+
+	uc.logger.InfoContext(ctx, "passwordless key deployed and host key pinned",
 		slog.String("host_ip", host.HostIP),
 		slog.Uint64("host_port", uint64(host.HostPort)),
 		slog.String("host_user", host.HostUser),
 		slog.Int("key_count", len(keys)),
+		slog.String("host_key_fingerprint", remote.HostKeyFingerprint(captured)),
 	)
 	return nil
 }
 
-func (uc *HostUseCase) dialSSH(ctx context.Context, addr, user string) (*ssh.Client, error) {
-	cfg := &ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{uc.authMethod},
-		// Host keys are not provisioned for managed hosts yet. This is the same
-		// trust model as a first-time ssh(1) connection, but without TOFU.
-
-		// #nosec G106 -- internal trusted network, skip host key check for automation
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+func (uc *HostUseCase) dialSSH(ctx context.Context, addr, user string, callback ssh.HostKeyCallback) (*ssh.Client, error) {
+	return remote.DialSSH(ctx, remote.SSHConfig{
+		Addr:            addr,
+		User:            user,
+		AuthMethods:     []ssh.AuthMethod{uc.authMethod},
 		Timeout:         uc.sshTimeout,
-	}
-
-	dialer := &net.Dialer{Timeout: uc.sshTimeout}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, errorx.Wrap(err, errorx.CodeSSHConnectionFailed, fmt.Sprintf("SSH连接失败: %s", addr))
-	}
-
-	// ClientConfig.Timeout only covers the TCP dial; bound the handshake too.
-	_ = conn.SetDeadline(time.Now().Add(uc.sshTimeout))
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
-	if err != nil {
-		_ = conn.Close()
-		return nil, errorx.Wrap(err, errorx.CodeSSHConnectionFailed, fmt.Sprintf("SSH握手失败: %s", addr))
-	}
-	_ = conn.SetDeadline(time.Time{})
-	return ssh.NewClient(sshConn, chans, reqs), nil
+		HostKeyCallback: callback,
+	})
 }
 
-// runCommand runs the onboarding script and bounds both command execution and
-// context cancellation by closing the session.
-func (uc *HostUseCase) runCommand(ctx context.Context, session *ssh.Session, cmd string) ([]byte, error) {
-	type result struct {
-		output []byte
-		err    error
-	}
-	done := make(chan result, 1)
-	go func() {
-		output, err := session.CombinedOutput(cmd)
-		done <- result{output: output, err: err}
-	}()
+// runCommand runs the onboarding script with the onboarding timeout applied on
+// top of the caller's context.
+func (uc *HostUseCase) runCommand(ctx context.Context, client *ssh.Client, cmd string) ([]byte, error) {
+	runCtx, cancel := context.WithTimeout(ctx, uc.sshTimeout)
+	defer cancel()
 
-	timer := time.NewTimer(uc.sshTimeout)
-	defer timer.Stop()
-
-	select {
-	case res := <-done:
-		return res.output, res.err
-	case <-timer.C:
-		_ = session.Close()
-		return nil, context.DeadlineExceeded
-	case <-ctx.Done():
-		_ = session.Close()
-		return nil, ctx.Err()
-	}
+	return remote.RunSSHCommandCombined(runCtx, client, cmd)
 }
 
 func (uc *HostUseCase) verifyWinRMConnection(ctx context.Context, host *Host) error {
@@ -469,28 +630,19 @@ func (uc *HostUseCase) verifyWinRMConnection(ctx context.Context, host *Host) er
 		return errorx.Wrap(err, errorx.CodeConfigError, "读取 WinRM 客户端私钥失败")
 	}
 
-	endpoint := winrm.NewEndpoint(
-		host.HostIP,
-		int(host.HostPort),
-		uc.winrmUseTLS,
-		uc.winrmInsecure,
-		uc.winrmCACert,
-		clientCert,
-		clientKey,
-		uc.sshTimeout,
-	)
-
-	params := winrm.DefaultParameters
-	params.TransportDecorator = func() winrm.Transporter {
-		return &winrm.ClientAuthRequest{}
-	}
-
-	client, err := winrm.NewClientWithParameters(
-		endpoint,
-		host.HostUser,
-		"",
-		params,
-	)
+	client, _, err := remote.NewWinRMClient(remote.WinRMConfig{
+		Host:       host.HostIP,
+		Port:       int(host.HostPort),
+		User:       host.HostUser,
+		Password:   "",
+		UseTLS:     uc.winrmUseTLS,
+		Insecure:   uc.winrmInsecure,
+		CACert:     uc.winrmCACert,
+		ClientCert: clientCert,
+		ClientKey:  clientKey,
+		Transport:  "cert",
+		Timeout:    uc.sshTimeout,
+	})
 	if err != nil {
 		return errorx.Wrap(err, errorx.CodeWinRMConnectionFailed, "创建 WinRM 客户端失败")
 	}

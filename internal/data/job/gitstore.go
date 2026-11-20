@@ -39,8 +39,8 @@ const (
 	AuthSSH AuthType = "ssh"
 )
 
-// gitConfig describes the backing git repository.
-type gitConfig struct {
+// GitConfig describes the backing git repository.
+type GitConfig struct {
 	URL              string        // remote repository URL
 	Branch           string        // branch to read/write, defaults to main
 	Dir              string        // local working copy directory
@@ -51,6 +51,8 @@ type gitConfig struct {
 	Password         string        // HTTP password or access token
 	SSHKeyPath       string        // SSH private key path; empty uses ssh-agent
 	SSHKeyPassphrase string        // optional SSH key passphrase
+	KnownHosts       string        // known_hosts file for SSH; empty uses defaults
+	SSHHostKey       string        // pinned SSH host key (authorized_keys line)
 	Timeout          time.Duration // per-operation timeout, defaults to 60s
 	InsecureSkipTLS  bool          // skip HTTPS certificate verification
 }
@@ -58,14 +60,14 @@ type gitConfig struct {
 // gitStore is a git-backed file store. Operations on one gitStore are serialized
 // because they share a single working copy.
 type gitStore struct {
-	cfg  gitConfig
+	cfg  GitConfig
 	auth transport.AuthMethod
 	mu   sync.Mutex
 }
 
 // New validates the configuration, loads credentials, and returns a store.
 // The remote is cloned lazily on the first operation.
-func NewGitStore(cfg gitConfig) (biz.ScriptStore, error) {
+func NewGitStore(cfg GitConfig) (biz.ScriptStore, error) {
 	cfg.URL = strings.TrimSpace(cfg.URL)
 	cfg.Dir = strings.TrimSpace(cfg.Dir)
 	cfg.Branch = strings.TrimSpace(cfg.Branch)
@@ -355,7 +357,7 @@ func (s *gitStore) headHash(repo *git.Repository) (string, error) {
 	return ref.Hash().String(), nil
 }
 
-func buildAuth(cfg gitConfig) (transport.AuthMethod, error) {
+func buildAuth(cfg GitConfig) (transport.AuthMethod, error) {
 	switch cfg.AuthType {
 	case AuthNone:
 		return nil, nil
@@ -370,10 +372,19 @@ func buildAuth(cfg gitConfig) (transport.AuthMethod, error) {
 		if username == "" {
 			username = "git"
 		}
+
+		callback, err := gitHostKeyCallback(cfg)
+		if err != nil {
+			return nil, err
+		}
+
 		if cfg.SSHKeyPath == "" {
 			auth, err := gitssh.NewSSHAgentAuth(username)
 			if err != nil {
 				return nil, fmt.Errorf("git store: ssh agent auth: %w", err)
+			}
+			if callback != nil {
+				auth.HostKeyCallback = callback
 			}
 			return auth, nil
 		}
@@ -392,14 +403,59 @@ func buildAuth(cfg gitConfig) (transport.AuthMethod, error) {
 			return nil, fmt.Errorf("git store: parse ssh key: %w", err)
 		}
 		return &gitssh.PublicKeys{
-			User:   username,
-			Signer: signer,
-			// #nosec G106 -- internal trusted network, skip host key check for automation
-			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			User:            username,
+			Signer:          signer,
+			HostKeyCallback: callback,
 		}, nil
 	default:
 		return nil, fmt.Errorf("git store: unsupported auth type %q", cfg.AuthType)
 	}
+}
+
+// gitHostKeyCallback builds a host-key verifier for SSH remotes. There is no
+// insecure fallback: either job.script_repo.ssh_host_key is pinned, or a
+// known_hosts file (configured or the system default) must exist.
+func gitHostKeyCallback(cfg GitConfig) (ssh.HostKeyCallback, error) {
+	if strings.TrimSpace(cfg.URL) == "" {
+		return nil, nil
+	}
+	if !isSSHRemote(cfg.URL) {
+		return nil, nil
+	}
+	if pinned := strings.TrimSpace(cfg.SSHHostKey); pinned != "" {
+		key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pinned))
+		if err != nil {
+			return nil, fmt.Errorf("git store: parse pinned ssh_host_key: %w", err)
+		}
+		return ssh.FixedHostKey(key), nil
+	}
+	if knownHosts := strings.TrimSpace(cfg.KnownHosts); knownHosts != "" {
+		if _, err := os.Stat(knownHosts); err != nil {
+			return nil, fmt.Errorf("git store: known_hosts %q: %w", knownHosts, err)
+		}
+		callback, err := gitssh.NewKnownHostsCallback(knownHosts)
+		if err != nil {
+			return nil, fmt.Errorf("git store: load known_hosts %q: %w", knownHosts, err)
+		}
+		return callback, nil
+	}
+	callback, err := gitssh.NewKnownHostsCallback()
+	if err != nil {
+		return nil, fmt.Errorf("git store: no known_hosts available; configure job.script_repo.known_hosts or ssh_host_key: %w", err)
+	}
+	return callback, nil
+}
+
+func isSSHRemote(rawURL string) bool {
+	rawURL = strings.TrimSpace(rawURL)
+	if strings.HasPrefix(strings.ToLower(rawURL), "ssh://") {
+		return true
+	}
+	// SCP-like syntax: git@example.com:org/repo.git
+	if strings.Contains(rawURL, "://") {
+		return false
+	}
+	return strings.Contains(rawURL, "@") && strings.Contains(rawURL, ":")
 }
 
 // sanitizePath validates a repository-relative slash-separated path.

@@ -72,6 +72,21 @@ func (m *mockScriptRecordRepo) Update(_ context.Context, id uint64, status, code
 	return nil
 }
 
+func (m *mockScriptRecordRepo) MarkInterrupted(_ context.Context, msg string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for _, r := range m.records {
+		if r.Status == ScriptRecordStatusPending || r.Status == ScriptRecordStatusRunning {
+			r.Status = ScriptRecordStatusCrashed
+			r.ErrorMessage = msg
+			r.UpdatedAt = time.Now()
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (m *mockScriptRecordRepo) FindByID(_ context.Context, id uint64) (*ScriptRecord, error) {
 	if m.findErr != nil {
 		return nil, m.findErr

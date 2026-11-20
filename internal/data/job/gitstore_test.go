@@ -2,8 +2,12 @@ package job
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,8 +15,10 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 )
 
 // seedRepository creates a bare remote with a single commit on the given branch.
@@ -71,7 +77,7 @@ func cloneContent(t *testing.T, remote, branch, repoPath string) []byte {
 func TestStore_SaveReadDelete(t *testing.T) {
 	ctx := context.Background()
 	remote := seedRepository(t, "main")
-	store, err := NewGitStore(gitConfig{
+	store, err := NewGitStore(GitConfig{
 		URL:         remote,
 		Branch:      "main",
 		Dir:         filepath.Join(t.TempDir(), "work"),
@@ -97,7 +103,7 @@ func TestStore_SaveReadDelete(t *testing.T) {
 	assert.Equal(t, hash, sameHash)
 
 	// A second working copy reads the file from the remote.
-	other, err := NewGitStore(gitConfig{
+	other, err := NewGitStore(GitConfig{
 		URL:         remote,
 		Branch:      "main",
 		Dir:         filepath.Join(t.TempDir(), "other"),
@@ -126,7 +132,7 @@ func TestStore_EmptyRemote(t *testing.T) {
 	_, err := git.PlainInit(remote, true)
 	require.NoError(t, err)
 
-	store, err := NewGitStore(gitConfig{
+	store, err := NewGitStore(GitConfig{
 		URL:         remote,
 		Branch:      "main",
 		Dir:         filepath.Join(t.TempDir(), "work"),
@@ -143,7 +149,7 @@ func TestStore_EmptyRemote(t *testing.T) {
 }
 
 func TestStore_RejectsInvalidPaths(t *testing.T) {
-	store, err := NewGitStore(gitConfig{
+	store, err := NewGitStore(GitConfig{
 		URL: "file:///nonexistent/repo.git",
 		Dir: filepath.Join(t.TempDir(), "work"),
 	})
@@ -156,15 +162,67 @@ func TestStore_RejectsInvalidPaths(t *testing.T) {
 }
 
 func TestNew_Validation(t *testing.T) {
-	_, err := NewGitStore(gitConfig{Dir: t.TempDir()})
+	_, err := NewGitStore(GitConfig{Dir: t.TempDir()})
 	require.Error(t, err)
 
-	_, err = NewGitStore(gitConfig{URL: "file:///repo.git"})
+	_, err = NewGitStore(GitConfig{URL: "file:///repo.git"})
 	require.Error(t, err)
 
-	_, err = NewGitStore(gitConfig{URL: "file:///repo.git", Dir: t.TempDir(), AuthType: "kerberos"})
+	_, err = NewGitStore(GitConfig{URL: "file:///repo.git", Dir: t.TempDir(), AuthType: "kerberos"})
 	require.Error(t, err)
 
-	_, err = NewGitStore(gitConfig{URL: "file:///repo.git", Dir: t.TempDir(), AuthType: AuthSSH, SSHKeyPath: filepath.Join(t.TempDir(), "missing.key")})
+	_, err = NewGitStore(GitConfig{URL: "file:///repo.git", Dir: t.TempDir(), AuthType: AuthSSH, SSHKeyPath: filepath.Join(t.TempDir(), "missing.key")})
 	require.Error(t, err)
+}
+
+func TestBuildAuthSSHPinnedHostKey(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	require.NoError(t, err)
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(block), 0o600))
+
+	serverKey, err := ssh.NewPublicKey(pub)
+	require.NoError(t, err)
+	pinned := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(serverKey)))
+
+	auth, err := buildAuth(GitConfig{
+		URL:        "ssh://git@example.com/org/repo.git",
+		Dir:        t.TempDir(),
+		AuthType:   AuthSSH,
+		SSHKeyPath: keyPath,
+		SSHHostKey: pinned,
+	})
+	require.NoError(t, err)
+
+	keys, ok := auth.(*gitssh.PublicKeys)
+	require.True(t, ok)
+	require.NotNil(t, keys.HostKeyCallback)
+	require.NoError(t, keys.HostKeyCallback("example.com:22", nil, serverKey))
+
+	otherPub, _, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	otherKey, err := ssh.NewPublicKey(otherPub)
+	require.NoError(t, err)
+	require.Error(t, keys.HostKeyCallback("example.com:22", nil, otherKey))
+}
+
+func TestBuildAuthSSHRequiresKnownHosts(t *testing.T) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	require.NoError(t, err)
+	keyPath := filepath.Join(t.TempDir(), "id_ed25519")
+	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(block), 0o600))
+
+	t.Setenv("SSH_KNOWN_HOSTS", filepath.Join(t.TempDir(), "missing_known_hosts"))
+	_, err = buildAuth(GitConfig{
+		URL:        "ssh://git@example.com/org/repo.git",
+		Dir:        t.TempDir(),
+		AuthType:   AuthSSH,
+		SSHKeyPath: keyPath,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "known_hosts")
 }

@@ -1177,6 +1177,502 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/hosts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "按名称、标签、IP、协议、操作系统分页筛选主机",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CMDB/主机管理"
+                ],
+                "summary": "主机列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "页码 (默认1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量 (默认20, 最大100)",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "名称模糊匹配",
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "标签精确匹配",
+                        "name": "label",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "IP模糊匹配",
+                        "name": "host_ip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "连接协议 (ssh/winrm)",
+                        "name": "protocol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "操作系统 (linux/windows)",
+                        "name": "os_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "排序规则",
+                        "name": "order_by",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/cmdb.HostPageResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "创建主机记录；SSH 主机会先尝试部署免密公钥，WinRM 主机按配置校验证书连通性",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CMDB/主机管理"
+                ],
+                "summary": "纳管主机",
+                "parameters": [
+                    {
+                        "description": "主机信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.CreateHostReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "创建成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/cmdb.HostResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "主机连接信息已存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/hosts/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "根据主键获取主机连接信息",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CMDB/主机管理"
+                ],
+                "summary": "获取主机",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "主机ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/cmdb.HostResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "主机不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "全量替换主机信息；连接参数变化时会重新执行免密公钥部署或 WinRM 校验",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CMDB/主机管理"
+                ],
+                "summary": "更新主机",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "主机ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "主机信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.UpdateHostReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "更新成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/cmdb.HostResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "主机不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "主机连接信息已存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "软删除主机记录并清理 Ansible host_vars",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CMDB/主机管理"
+                ],
+                "summary": "删除主机",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "主机ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "删除成功",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "主机不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/hosts/{id}/refresh-key": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "重新连接 SSH 主机并重新记录主机公钥；用于主机重装或密钥轮换后恢复远程执行",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "CMDB/主机管理"
+                ],
+                "summary": "刷新主机密钥",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "主机ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "刷新成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/cmdb.HostResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "主机不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/menus": {
             "get": {
                 "security": [
@@ -2065,6 +2561,1484 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/schedules": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "按名称、启用状态、脚本、主机分页筛选计划任务",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/计划任务"
+                ],
+                "summary": "计划任务列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "页码 (默认1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量 (默认20, 最大100)",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "名称模糊匹配",
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "启用状态",
+                        "name": "is_enabled",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "脚本ID",
+                        "name": "script_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "主机ID",
+                        "name": "host_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "排序规则",
+                        "name": "order_by",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.SchedulePageResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "创建 cron 计划任务；启用时立即注册到调度器",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/计划任务"
+                ],
+                "summary": "创建计划任务",
+                "parameters": [
+                    {
+                        "description": "计划任务参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/job.CreateScheduleReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "创建成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScheduleResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/schedules/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "根据主键获取计划任务配置",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/计划任务"
+                ],
+                "summary": "获取计划任务",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "计划任务ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScheduleResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "计划任务不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "全量更新计划任务并重新注册 cron 条目",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/计划任务"
+                ],
+                "summary": "更新计划任务",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "计划任务ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "计划任务参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/job.UpdateScheduleReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "更新成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScheduleResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "计划任务不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "删除计划任务并从调度器移除",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/计划任务"
+                ],
+                "summary": "删除计划任务",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "计划任务ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "删除成功",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "计划任务不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/schedules/{id}/disable": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "停用计划任务并从调度器移除",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/计划任务"
+                ],
+                "summary": "停用计划任务",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "计划任务ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "停用成功",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "计划任务不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/schedules/{id}/enable": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "启用计划任务并注册到调度器",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/计划任务"
+                ],
+                "summary": "启用计划任务",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "计划任务ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "启用成功",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "计划任务不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/schedules/{id}/run": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "异步触发一次计划任务执行，立即返回；执行结果写入脚本执行记录",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/计划任务"
+                ],
+                "summary": "立即执行计划任务",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "计划任务ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "已触发",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "计划任务不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/script-records": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "按脚本、主机、状态、触发方式、执行人分页筛选执行记录",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/执行记录"
+                ],
+                "summary": "执行记录列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "页码 (默认1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量 (默认20, 最大100)",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "脚本ID",
+                        "name": "script_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "主机ID",
+                        "name": "host_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "状态 (0-6)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "触发方式 (cron/api)",
+                        "name": "trigger_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "执行人",
+                        "name": "username",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "排序规则",
+                        "name": "order_by",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScriptRecordPageResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "创建执行记录并异步执行脚本；host_id 为 0 时在本机执行，否则通过 SSH/WinRM 在目标主机执行",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/执行记录"
+                ],
+                "summary": "触发脚本执行",
+                "parameters": [
+                    {
+                        "description": "执行参数",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/job.CreateScriptRecordReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "已创建执行记录",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScriptRecordResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "脚本不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/script-records/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "根据主键获取脚本执行状态与结果",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/执行记录"
+                ],
+                "summary": "获取执行记录",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "执行记录ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScriptRecordResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "执行记录不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/script-records/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "取消正在等待或运行的脚本执行",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/执行记录"
+                ],
+                "summary": "取消执行",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "执行记录ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "已取消",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/script-records/{id}/log": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "下载脚本执行的 stdout/stderr 日志文件",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "Job/执行记录"
+                ],
+                "summary": "下载执行日志",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "执行记录ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "日志文件",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "记录或日志不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scripts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "按项目、标签、语言、名称、状态分页筛选脚本",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/脚本管理"
+                ],
+                "summary": "脚本列表",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "页码 (默认1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量 (默认20, 最大100)",
+                        "name": "page_size",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "项目精确匹配",
+                        "name": "project",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "标签精确匹配",
+                        "name": "label",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "语言精确匹配",
+                        "name": "language",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "名称模糊匹配",
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "启用状态",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "排序规则",
+                        "name": "order_by",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScriptPageResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "将脚本正文写入配置的存储后端（Git 仓库或本地目录），并保存元数据",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/脚本管理"
+                ],
+                "summary": "创建脚本",
+                "parameters": [
+                    {
+                        "description": "脚本信息与正文",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/job.CreateScriptReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "创建成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScriptResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "同名脚本已存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scripts/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "根据主键获取脚本元数据",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/脚本管理"
+                ],
+                "summary": "获取脚本",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "脚本ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScriptResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "脚本不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "全量更新脚本元数据；传入 content 时同时替换仓库中的正文",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/脚本管理"
+                ],
+                "summary": "更新脚本",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "脚本ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "脚本信息",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/job.UpdateScriptReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "更新成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScriptResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "脚本不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "同名脚本已存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "删除脚本元数据及存储后端中的正文",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/脚本管理"
+                ],
+                "summary": "删除脚本",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "脚本ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "删除成功",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "脚本不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/scripts/{id}/content": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "从脚本存储后端读取正文",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Job/脚本管理"
+                ],
+                "summary": "获取脚本正文",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "脚本ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "查询成功",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/common.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/job.ScriptContentResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "参数不合法",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "未登录或登录已失效",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "无操作权限",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "脚本不存在",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "内部服务异常",
+                        "schema": {
+                            "$ref": "#/definitions/common.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/users": {
             "get": {
                 "security": [
@@ -2684,6 +4658,217 @@ const docTemplate = `{
                 "public_key": {
                     "description": "PublicKey is the PEM-encoded public key.",
                     "type": "string"
+                }
+            }
+        },
+        "cmdb.CreateHostReq": {
+            "type": "object",
+            "required": [
+                "host_ip",
+                "host_user",
+                "name"
+            ],
+            "properties": {
+                "host_ip": {
+                    "type": "string",
+                    "maxLength": 108,
+                    "example": "10.0.0.10"
+                },
+                "host_port": {
+                    "type": "integer",
+                    "example": 22
+                },
+                "host_user": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "example": "root"
+                },
+                "label": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "example": "prod"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "example": "web-01"
+                },
+                "os_type": {
+                    "type": "string",
+                    "enum": [
+                        "linux",
+                        "windows"
+                    ],
+                    "example": "linux"
+                },
+                "protocol": {
+                    "type": "string",
+                    "enum": [
+                        "ssh",
+                        "winrm"
+                    ],
+                    "example": "ssh"
+                },
+                "py_path": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "/usr/bin/python3"
+                },
+                "remark": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "web server"
+                }
+            }
+        },
+        "cmdb.HostPageResult": {
+            "type": "object",
+            "properties": {
+                "list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.HostResp"
+                    }
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "cmdb.HostResp": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "host_ip": {
+                    "type": "string",
+                    "example": "10.0.0.10"
+                },
+                "host_port": {
+                    "type": "integer",
+                    "example": 22
+                },
+                "host_user": {
+                    "type": "string",
+                    "example": "root"
+                },
+                "id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "label": {
+                    "type": "string",
+                    "example": "prod"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "web-01"
+                },
+                "os_type": {
+                    "type": "string",
+                    "example": "linux"
+                },
+                "protocol": {
+                    "type": "string",
+                    "example": "ssh"
+                },
+                "py_path": {
+                    "type": "string",
+                    "example": "/usr/bin/python3"
+                },
+                "remark": {
+                    "type": "string",
+                    "example": "web server"
+                },
+                "ssh_host_key_fingerprint": {
+                    "description": "SSHHostKeyFingerprint identifies the pinned SSH host key; empty when the\nhost was created without SSH onboarding.",
+                    "type": "string",
+                    "example": "SHA256:abc..."
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.UpdateHostReq": {
+            "type": "object",
+            "required": [
+                "host_ip",
+                "host_user",
+                "name"
+            ],
+            "properties": {
+                "host_ip": {
+                    "type": "string",
+                    "maxLength": 108,
+                    "example": "10.0.0.10"
+                },
+                "host_port": {
+                    "type": "integer",
+                    "example": 22
+                },
+                "host_user": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "example": "root"
+                },
+                "label": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "example": "prod"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "example": "web-01"
+                },
+                "os_type": {
+                    "type": "string",
+                    "enum": [
+                        "linux",
+                        "windows"
+                    ],
+                    "example": "linux"
+                },
+                "protocol": {
+                    "type": "string",
+                    "enum": [
+                        "ssh",
+                        "winrm"
+                    ],
+                    "example": "ssh"
+                },
+                "py_path": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "/usr/bin/python3"
+                },
+                "remark": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "web server"
+                }
+            }
+        },
+        "common.Response": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "业务状态码 (0 表示成功)",
+                    "type": "integer",
+                    "example": 0
+                },
+                "data": {
+                    "description": "响应数据对象"
+                },
+                "msg": {
+                    "description": "状态描述或提示信息",
+                    "type": "string",
+                    "example": "ok"
                 }
             }
         },
@@ -4082,6 +6267,522 @@ const docTemplate = `{
                     "example": 1
                 }
             }
+        },
+        "job.CreateScheduleReq": {
+            "type": "object",
+            "required": [
+                "name",
+                "script_id",
+                "specification"
+            ],
+            "properties": {
+                "env_vars": {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "example": "{\"MODE\":\"full\"}"
+                },
+                "host_id": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "is_enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "is_retry": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "max_retries": {
+                    "type": "integer",
+                    "maximum": 10,
+                    "minimum": 0,
+                    "example": 3
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1,
+                    "example": "nightly-backup"
+                },
+                "retry_interval": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 0,
+                    "example": 60
+                },
+                "script_args": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "example": "--full"
+                },
+                "script_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "specification": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "example": "0 2 * * *"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "maximum": 43200,
+                    "minimum": 0,
+                    "example": 600
+                },
+                "work_dir": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "/tmp"
+                }
+            }
+        },
+        "job.CreateScriptRecordReq": {
+            "type": "object",
+            "required": [
+                "script_id"
+            ],
+            "properties": {
+                "env_vars": {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "example": "{\"MODE\":\"full\"}"
+                },
+                "host_id": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "script_args": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "example": "--full"
+                },
+                "script_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "timeout": {
+                    "type": "integer",
+                    "maximum": 43200,
+                    "minimum": 0,
+                    "example": 600
+                },
+                "work_dir": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "/tmp"
+                }
+            }
+        },
+        "job.CreateScriptReq": {
+            "type": "object",
+            "required": [
+                "content",
+                "label",
+                "name",
+                "project"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "example": "#!/bin/sh\necho hi"
+                },
+                "descr": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "数据库备份"
+                },
+                "label": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "example": "db"
+                },
+                "language": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "example": "shell"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "example": "backup"
+                },
+                "param_desc": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "--full"
+                },
+                "project": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "example": "ops"
+                },
+                "status": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "job.SchedulePageResult": {
+            "type": "object",
+            "properties": {
+                "list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/job.ScheduleResp"
+                    }
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "job.ScheduleResp": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "env_vars": {
+                    "type": "string",
+                    "example": "{\"MODE\":\"full\"}"
+                },
+                "host_id": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "is_enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "is_retry": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "max_retries": {
+                    "type": "integer",
+                    "example": 3
+                },
+                "name": {
+                    "type": "string",
+                    "example": "nightly-backup"
+                },
+                "retry_interval": {
+                    "type": "integer",
+                    "example": 60
+                },
+                "script": {
+                    "$ref": "#/definitions/job.ScriptResp"
+                },
+                "script_args": {
+                    "type": "string",
+                    "example": "--full"
+                },
+                "script_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "specification": {
+                    "type": "string",
+                    "example": "0 2 * * *"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "example": 600
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "admin"
+                },
+                "work_dir": {
+                    "type": "string",
+                    "example": "/tmp"
+                }
+            }
+        },
+        "job.ScriptContentResp": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                }
+            }
+        },
+        "job.ScriptPageResult": {
+            "type": "object",
+            "properties": {
+                "list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/job.ScriptResp"
+                    }
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "job.ScriptRecordPageResult": {
+            "type": "object",
+            "properties": {
+                "list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/job.ScriptRecordResp"
+                    }
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 1
+                }
+            }
+        },
+        "job.ScriptRecordResp": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "error_message": {
+                    "type": "string",
+                    "example": ""
+                },
+                "exit_code": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "host_id": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "log_name": {
+                    "type": "string",
+                    "example": "5f0c....log"
+                },
+                "script": {
+                    "$ref": "#/definitions/job.ScriptResp"
+                },
+                "script_args": {
+                    "type": "string",
+                    "example": "--full"
+                },
+                "script_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "status": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "status_text": {
+                    "type": "string",
+                    "example": "success"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "example": 600
+                },
+                "trigger_type": {
+                    "type": "string",
+                    "example": "api"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "admin"
+                },
+                "work_dir": {
+                    "type": "string",
+                    "example": "/tmp"
+                }
+            }
+        },
+        "job.ScriptResp": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "descr": {
+                    "type": "string",
+                    "example": "数据库备份"
+                },
+                "id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "label": {
+                    "type": "string",
+                    "example": "db"
+                },
+                "language": {
+                    "type": "string",
+                    "example": "shell"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "backup"
+                },
+                "param_desc": {
+                    "type": "string",
+                    "example": "--full"
+                },
+                "project": {
+                    "type": "string",
+                    "example": "ops"
+                },
+                "status": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string",
+                    "example": "admin"
+                }
+            }
+        },
+        "job.UpdateScheduleReq": {
+            "type": "object",
+            "required": [
+                "name",
+                "script_id",
+                "specification"
+            ],
+            "properties": {
+                "env_vars": {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "example": "{\"MODE\":\"full\"}"
+                },
+                "host_id": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "is_enabled": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "is_retry": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "max_retries": {
+                    "type": "integer",
+                    "maximum": 10,
+                    "minimum": 0,
+                    "example": 3
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1,
+                    "example": "nightly-backup"
+                },
+                "retry_interval": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 0,
+                    "example": 60
+                },
+                "script_args": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "example": "--full"
+                },
+                "script_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "specification": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "example": "0 2 * * *"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "maximum": 43200,
+                    "minimum": 0,
+                    "example": 600
+                },
+                "work_dir": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "/tmp"
+                }
+            }
+        },
+        "job.UpdateScriptReq": {
+            "type": "object",
+            "required": [
+                "label",
+                "name",
+                "project"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "example": "#!/bin/sh\necho hi"
+                },
+                "descr": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "数据库备份"
+                },
+                "label": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "example": "db"
+                },
+                "language": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "example": "shell"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "example": "backup"
+                },
+                "param_desc": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "example": "--full"
+                },
+                "project": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "example": "ops"
+                },
+                "status": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
         }
     },
     "securityDefinitions": {
@@ -4101,7 +6802,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "grain API",
-	Description:      "grain 自动化平台 API 接口文档",
+	Description:      "grain 运营管控平台 API 接口文档",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

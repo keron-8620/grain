@@ -87,6 +87,7 @@ type scriptRecordPO struct {
 	LogName      string    `gorm:"column:log_name;type:varchar(255);comment:日志文件路径" json:"log_name"`
 	ErrorMessage string    `gorm:"column:error_message;type:text;comment:错误信息" json:"error_message"`
 	Username     string    `gorm:"column:username;type:varchar(50);comment:用户名" json:"username"`
+	HostID       uint64    `gorm:"column:host_id;not null;index;comment:主机ID" json:"host_id"`
 	ScriptID     uint64    `gorm:"column:script_id;not null;index;comment:脚本ID" json:"script_id"`
 	Script       *scriptPO `gorm:"foreignKey:ScriptID;references:ID;constraint:OnDelete:CASCADE" json:"script,omitempty"`
 }
@@ -112,6 +113,7 @@ func (m *scriptRecordPO) LogValue() slog.Value {
 			slog.String("log_name", m.LogName),
 			slog.String("error_message", m.ErrorMessage),
 			slog.String("username", m.Username),
+			slog.Uint64("host_id", m.HostID),
 			slog.Uint64("script_id", m.ScriptID),
 		},
 	)
@@ -130,6 +132,7 @@ func (m *scriptRecordPO) ToUpdateMap() map[string]any {
 		"log_name":      m.LogName,
 		"error_message": m.ErrorMessage,
 		"username":      m.Username,
+		"host_id":       m.HostID,
 		"script_id":     m.ScriptID,
 		"updated_at":    time.Now(),
 	}
@@ -150,6 +153,7 @@ type schedulePO struct {
 	RetryInterval int       `gorm:"column:retry_interval;type:int;default:60;comment:重试间隔(秒)" json:"retry_interval"`
 	MaxRetries    int       `gorm:"column:max_retries;type:int;default:3;comment:最大重试次数" json:"max_retries"`
 	Username      string    `gorm:"column:username;type:varchar(50);comment:用户名" json:"username"`
+	HostID        uint64    `gorm:"column:host_id;not null;index;comment:主机ID" json:"host_id"`
 	ScriptID      uint64    `gorm:"column:script_id;not null;index;comment:脚本ID" json:"script_id"`
 	Script        *scriptPO `gorm:"foreignKey:ScriptID;references:ID;constraint:OnDelete:RESTRICT" json:"script,omitempty"`
 }
@@ -176,6 +180,7 @@ func (m *schedulePO) LogValue() slog.Value {
 			slog.Int("retry_interval", m.RetryInterval),
 			slog.Int("max_retries", m.MaxRetries),
 			slog.String("username", m.Username),
+			slog.Uint64("host_id", m.HostID),
 			slog.Uint64("script_id", m.ScriptID),
 		},
 	)
@@ -195,6 +200,7 @@ func (m *schedulePO) ToUpdateMap() map[string]any {
 		"retry_interval": m.RetryInterval,
 		"max_retries":    m.MaxRetries,
 		"username":       m.Username,
+		"host_id":        m.HostID,
 		"script_id":      m.ScriptID,
 		"updated_at":     time.Now(),
 	}

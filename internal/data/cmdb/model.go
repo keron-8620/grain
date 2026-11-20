@@ -32,6 +32,8 @@ type hostPO struct {
 	PyPath   string `gorm:"column:py_path;type:varchar(254);comment:python路径" json:"py_path"`
 	Remark   string `gorm:"column:remark;type:varchar(254);comment:备注" json:"remark"`
 	OSType   string `gorm:"column:os_type;type:varchar(20);default:'linux';comment:操作系统类型" json:"os_type"`
+	// SSHHostKey pins the SSH server host key captured during onboarding.
+	SSHHostKey string `gorm:"column:ssh_host_key;type:varchar(1024);comment:SSH主机公钥(authorized_keys格式)" json:"ssh_host_key"`
 }
 
 func (hostPO) TableName() string {
@@ -54,6 +56,8 @@ func (m *hostPO) LogValue() slog.Value {
 			slog.String("py_path", m.PyPath),
 			slog.String("remark", m.Remark),
 			slog.String("os_type", m.OSType),
+			// Do not log the full host key; the fingerprint is enough for audit.
+			slog.Bool("has_ssh_host_key", m.SSHHostKey != ""),
 		},
 	)
 	return slog.GroupValue(attrs...)
@@ -61,15 +65,16 @@ func (m *hostPO) LogValue() slog.Value {
 
 func (m *hostPO) ToUpdateMap() map[string]any {
 	return map[string]any{
-		"name":       m.Name,
-		"label":      m.Label,
-		"host_ip":    m.HostIP,
-		"host_port":  m.HostPort,
-		"host_user":  m.HostUser,
-		"protocol":   m.Protocol,
-		"py_path":    m.PyPath,
-		"remark":     m.Remark,
-		"os_type":    m.OSType,
-		"updated_at": time.Now(),
+		"name":         m.Name,
+		"label":        m.Label,
+		"host_ip":      m.HostIP,
+		"host_port":    m.HostPort,
+		"host_user":    m.HostUser,
+		"protocol":     m.Protocol,
+		"py_path":      m.PyPath,
+		"remark":       m.Remark,
+		"os_type":      m.OSType,
+		"ssh_host_key": m.SSHHostKey,
+		"updated_at":   time.Now(),
 	}
 }

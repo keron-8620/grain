@@ -34,10 +34,13 @@ import (
 
 	"grain/docs"
 	"grain/internal/conf"
+	datacmdb "grain/internal/data/cmdb"
 	dataiam "grain/internal/data/iam"
 	datajob "grain/internal/data/job"
 	"grain/internal/middleware"
+	cmdbserver "grain/internal/server/cmdb"
 	iamserver "grain/internal/server/iam"
+	jobserver "grain/internal/server/job"
 	"grain/pkg/auth"
 	"grain/pkg/cryptoutil"
 	"grain/pkg/db"
@@ -154,6 +157,9 @@ func run() error {
 			if err := datajob.AutoMigrate(gormDB); err != nil {
 				return fmt.Errorf("job 数据库迁移失败: %w", err)
 			}
+			if err := datacmdb.AutoMigrate(gormDB); err != nil {
+				return fmt.Errorf("cmdb 数据库迁移失败: %w", err)
+			}
 			logger.Info("数据库迁移完成")
 		}
 		if execSqlPath != "" {
@@ -232,9 +238,15 @@ func run() error {
 		serverOptions = append(serverOptions, iamserver.WithRedisClient(redisClient))
 	}
 
-	r, err := NewRouter(ctx, bc, logger, gormDB, enforcer, crontab, serverOptions...)
+	r, jobSrv, err := NewRouter(ctx, bc, logger, gormDB, enforcer, crontab, serverOptions...)
 	if err != nil {
 		return fmt.Errorf("初始化路由失败: %w", err)
+	}
+	if jobSrv != nil {
+		if err := jobSrv.Start(ctx); err != nil {
+			logger.Error("启动计划任务调度失败", slog.Any("error", err))
+		}
+		defer jobSrv.Stop()
 	}
 
 	srv := &http.Server{
@@ -278,6 +290,7 @@ func run() error {
 		slog.Int("port", bc.Server.Port),
 		slog.Bool("ssl", bc.Server.SSL.Enable),
 		slog.Bool("redis", redisClient != nil),
+		slog.String("deployment", "single-instance"),
 		slog.String("version", version),
 		slog.String("commit", commitID),
 		slog.String("build_time", buildTime),
@@ -358,7 +371,7 @@ func NewRouter(
 	enforcer *casbin.SyncedEnforcer,
 	crontab *cron.Cron,
 	serverOptions ...iamserver.Option,
-) (*gin.Engine, error) {
+) (*gin.Engine, *jobserver.Server, error) {
 	r := gin.New()
 	if err := r.SetTrustedProxies(bc.Server.TrustedProxies); err != nil {
 		logger.Warn("配置受信任代理失败，将不信任代理转发头")
@@ -488,11 +501,40 @@ func NewRouter(
 	r.Use(middleware.TimeoutMiddleware(logger, bc.Server.Timeout.Request))
 
 	// 初始化加载业务模块
-	if _, err := iamserver.InitServer(ctx, r, bc, logger, gormDB, enforcer, serverOptions...); err != nil {
-		return nil, fmt.Errorf("初始化 IAM 模块失败: %w", err)
+	iamSrv, err := iamserver.InitServer(ctx, r, bc, logger, gormDB, enforcer, serverOptions...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("初始化 IAM 模块失败: %w", err)
 	}
 
-	return r, nil
+	// 初始化 job / cmdb 模块。它们复用 IAM 的 JWT 认证与 Casbin 鉴权。
+	jobSrv, err := jobserver.Init(ctx, r, jobserver.Options{
+		GormDB:        gormDB,
+		Bootstrap:     bc,
+		Logger:        logger,
+		Authenticator: iamSrv.Authenticator,
+		Enforcer:      enforcer,
+		Crontab:       crontab,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("初始化 job 模块失败: %w", err)
+	}
+	if _, err := cmdbserver.Init(ctx, r, cmdbserver.Options{
+		GormDB:        gormDB,
+		Bootstrap:     bc,
+		Logger:        logger,
+		Authenticator: iamSrv.Authenticator,
+		Enforcer:      enforcer,
+	}); err != nil {
+		return nil, nil, fmt.Errorf("初始化 cmdb 模块失败: %w", err)
+	}
+
+	// 将 job / cmdb 新增路由补录到 API 权限目录，并生成对应的 Casbin p 规则。
+	// IAM 自身的路由已在 InitServer 内完成同步与策略重建。
+	if _, err := iamSrv.SyncGinRoutes(ctx, r.Routes()); err != nil {
+		return nil, nil, fmt.Errorf("同步 job/cmdb 路由到权限目录失败: %w", err)
+	}
+
+	return r, jobSrv, nil
 }
 
 func publicKeysEqual(a, b crypto.PublicKey) bool {

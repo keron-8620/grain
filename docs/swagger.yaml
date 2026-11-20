@@ -50,6 +50,166 @@ definitions:
         description: PublicKey is the PEM-encoded public key.
         type: string
     type: object
+  cmdb.CreateHostReq:
+    properties:
+      host_ip:
+        example: 10.0.0.10
+        maxLength: 108
+        type: string
+      host_port:
+        example: 22
+        type: integer
+      host_user:
+        example: root
+        maxLength: 50
+        type: string
+      label:
+        example: prod
+        maxLength: 50
+        type: string
+      name:
+        example: web-01
+        maxLength: 50
+        minLength: 1
+        type: string
+      os_type:
+        enum:
+        - linux
+        - windows
+        example: linux
+        type: string
+      protocol:
+        enum:
+        - ssh
+        - winrm
+        example: ssh
+        type: string
+      py_path:
+        example: /usr/bin/python3
+        maxLength: 254
+        type: string
+      remark:
+        example: web server
+        maxLength: 254
+        type: string
+    required:
+    - host_ip
+    - host_user
+    - name
+    type: object
+  cmdb.HostPageResult:
+    properties:
+      list:
+        items:
+          $ref: '#/definitions/cmdb.HostResp'
+        type: array
+      total:
+        example: 1
+        type: integer
+    type: object
+  cmdb.HostResp:
+    properties:
+      created_at:
+        type: string
+      host_ip:
+        example: 10.0.0.10
+        type: string
+      host_port:
+        example: 22
+        type: integer
+      host_user:
+        example: root
+        type: string
+      id:
+        example: 1
+        type: integer
+      label:
+        example: prod
+        type: string
+      name:
+        example: web-01
+        type: string
+      os_type:
+        example: linux
+        type: string
+      protocol:
+        example: ssh
+        type: string
+      py_path:
+        example: /usr/bin/python3
+        type: string
+      remark:
+        example: web server
+        type: string
+      ssh_host_key_fingerprint:
+        description: |-
+          SSHHostKeyFingerprint identifies the pinned SSH host key; empty when the
+          host was created without SSH onboarding.
+        example: SHA256:abc...
+        type: string
+      updated_at:
+        type: string
+    type: object
+  cmdb.UpdateHostReq:
+    properties:
+      host_ip:
+        example: 10.0.0.10
+        maxLength: 108
+        type: string
+      host_port:
+        example: 22
+        type: integer
+      host_user:
+        example: root
+        maxLength: 50
+        type: string
+      label:
+        example: prod
+        maxLength: 50
+        type: string
+      name:
+        example: web-01
+        maxLength: 50
+        minLength: 1
+        type: string
+      os_type:
+        enum:
+        - linux
+        - windows
+        example: linux
+        type: string
+      protocol:
+        enum:
+        - ssh
+        - winrm
+        example: ssh
+        type: string
+      py_path:
+        example: /usr/bin/python3
+        maxLength: 254
+        type: string
+      remark:
+        example: web server
+        maxLength: 254
+        type: string
+    required:
+    - host_ip
+    - host_user
+    - name
+    type: object
+  common.Response:
+    properties:
+      code:
+        description: 业务状态码 (0 表示成功)
+        example: 0
+        type: integer
+      data:
+        description: 响应数据对象
+      msg:
+        description: 状态描述或提示信息
+        example: ok
+        type: string
+    type: object
   grain_internal_biz_iam.Api:
     properties:
       createdAt:
@@ -1039,9 +1199,400 @@ definitions:
         example: 1
         type: integer
     type: object
+  job.CreateScheduleReq:
+    properties:
+      env_vars:
+        example: '{"MODE":"full"}'
+        maxLength: 4096
+        type: string
+      host_id:
+        example: 0
+        type: integer
+      is_enabled:
+        example: true
+        type: boolean
+      is_retry:
+        example: false
+        type: boolean
+      max_retries:
+        example: 3
+        maximum: 10
+        minimum: 0
+        type: integer
+      name:
+        example: nightly-backup
+        maxLength: 100
+        minLength: 1
+        type: string
+      retry_interval:
+        example: 60
+        maximum: 86400
+        minimum: 0
+        type: integer
+      script_args:
+        example: --full
+        maxLength: 1000
+        type: string
+      script_id:
+        example: 1
+        type: integer
+      specification:
+        example: 0 2 * * *
+        maxLength: 100
+        type: string
+      timeout:
+        example: 600
+        maximum: 43200
+        minimum: 0
+        type: integer
+      work_dir:
+        example: /tmp
+        maxLength: 254
+        type: string
+    required:
+    - name
+    - script_id
+    - specification
+    type: object
+  job.CreateScriptRecordReq:
+    properties:
+      env_vars:
+        example: '{"MODE":"full"}'
+        maxLength: 4096
+        type: string
+      host_id:
+        example: 0
+        type: integer
+      script_args:
+        example: --full
+        maxLength: 1000
+        type: string
+      script_id:
+        example: 1
+        type: integer
+      timeout:
+        example: 600
+        maximum: 43200
+        minimum: 0
+        type: integer
+      work_dir:
+        example: /tmp
+        maxLength: 254
+        type: string
+    required:
+    - script_id
+    type: object
+  job.CreateScriptReq:
+    properties:
+      content:
+        example: |-
+          #!/bin/sh
+          echo hi
+        type: string
+      descr:
+        example: 数据库备份
+        maxLength: 254
+        type: string
+      label:
+        example: db
+        maxLength: 50
+        minLength: 1
+        type: string
+      language:
+        example: shell
+        maxLength: 50
+        type: string
+      name:
+        example: backup
+        maxLength: 50
+        minLength: 1
+        type: string
+      param_desc:
+        example: --full
+        maxLength: 254
+        type: string
+      project:
+        example: ops
+        maxLength: 50
+        minLength: 1
+        type: string
+      status:
+        example: true
+        type: boolean
+    required:
+    - content
+    - label
+    - name
+    - project
+    type: object
+  job.SchedulePageResult:
+    properties:
+      list:
+        items:
+          $ref: '#/definitions/job.ScheduleResp'
+        type: array
+      total:
+        example: 1
+        type: integer
+    type: object
+  job.ScheduleResp:
+    properties:
+      created_at:
+        type: string
+      env_vars:
+        example: '{"MODE":"full"}'
+        type: string
+      host_id:
+        example: 0
+        type: integer
+      id:
+        example: 1
+        type: integer
+      is_enabled:
+        example: true
+        type: boolean
+      is_retry:
+        example: false
+        type: boolean
+      max_retries:
+        example: 3
+        type: integer
+      name:
+        example: nightly-backup
+        type: string
+      retry_interval:
+        example: 60
+        type: integer
+      script:
+        $ref: '#/definitions/job.ScriptResp'
+      script_args:
+        example: --full
+        type: string
+      script_id:
+        example: 1
+        type: integer
+      specification:
+        example: 0 2 * * *
+        type: string
+      timeout:
+        example: 600
+        type: integer
+      updated_at:
+        type: string
+      username:
+        example: admin
+        type: string
+      work_dir:
+        example: /tmp
+        type: string
+    type: object
+  job.ScriptContentResp:
+    properties:
+      content:
+        type: string
+    type: object
+  job.ScriptPageResult:
+    properties:
+      list:
+        items:
+          $ref: '#/definitions/job.ScriptResp'
+        type: array
+      total:
+        example: 1
+        type: integer
+    type: object
+  job.ScriptRecordPageResult:
+    properties:
+      list:
+        items:
+          $ref: '#/definitions/job.ScriptRecordResp'
+        type: array
+      total:
+        example: 1
+        type: integer
+    type: object
+  job.ScriptRecordResp:
+    properties:
+      created_at:
+        type: string
+      error_message:
+        example: ""
+        type: string
+      exit_code:
+        example: 0
+        type: integer
+      host_id:
+        example: 0
+        type: integer
+      id:
+        example: 1
+        type: integer
+      log_name:
+        example: 5f0c....log
+        type: string
+      script:
+        $ref: '#/definitions/job.ScriptResp'
+      script_args:
+        example: --full
+        type: string
+      script_id:
+        example: 1
+        type: integer
+      status:
+        example: 2
+        type: integer
+      status_text:
+        example: success
+        type: string
+      timeout:
+        example: 600
+        type: integer
+      trigger_type:
+        example: api
+        type: string
+      updated_at:
+        type: string
+      username:
+        example: admin
+        type: string
+      work_dir:
+        example: /tmp
+        type: string
+    type: object
+  job.ScriptResp:
+    properties:
+      created_at:
+        type: string
+      descr:
+        example: 数据库备份
+        type: string
+      id:
+        example: 1
+        type: integer
+      label:
+        example: db
+        type: string
+      language:
+        example: shell
+        type: string
+      name:
+        example: backup
+        type: string
+      param_desc:
+        example: --full
+        type: string
+      project:
+        example: ops
+        type: string
+      status:
+        example: true
+        type: boolean
+      updated_at:
+        type: string
+      username:
+        example: admin
+        type: string
+    type: object
+  job.UpdateScheduleReq:
+    properties:
+      env_vars:
+        example: '{"MODE":"full"}'
+        maxLength: 4096
+        type: string
+      host_id:
+        example: 0
+        type: integer
+      is_enabled:
+        example: true
+        type: boolean
+      is_retry:
+        example: false
+        type: boolean
+      max_retries:
+        example: 3
+        maximum: 10
+        minimum: 0
+        type: integer
+      name:
+        example: nightly-backup
+        maxLength: 100
+        minLength: 1
+        type: string
+      retry_interval:
+        example: 60
+        maximum: 86400
+        minimum: 0
+        type: integer
+      script_args:
+        example: --full
+        maxLength: 1000
+        type: string
+      script_id:
+        example: 1
+        type: integer
+      specification:
+        example: 0 2 * * *
+        maxLength: 100
+        type: string
+      timeout:
+        example: 600
+        maximum: 43200
+        minimum: 0
+        type: integer
+      work_dir:
+        example: /tmp
+        maxLength: 254
+        type: string
+    required:
+    - name
+    - script_id
+    - specification
+    type: object
+  job.UpdateScriptReq:
+    properties:
+      content:
+        example: |-
+          #!/bin/sh
+          echo hi
+        type: string
+      descr:
+        example: 数据库备份
+        maxLength: 254
+        type: string
+      label:
+        example: db
+        maxLength: 50
+        minLength: 1
+        type: string
+      language:
+        example: shell
+        maxLength: 50
+        type: string
+      name:
+        example: backup
+        maxLength: 50
+        minLength: 1
+        type: string
+      param_desc:
+        example: --full
+        maxLength: 254
+        type: string
+      project:
+        example: ops
+        maxLength: 50
+        minLength: 1
+        type: string
+      status:
+        example: true
+        type: boolean
+    required:
+    - label
+    - name
+    - project
+    type: object
 info:
   contact: {}
-  description: grain 自动化平台 API 接口文档
+  description: grain 运营管控平台 API 接口文档
   title: grain API
   version: "1.0"
 paths:
@@ -1760,6 +2311,312 @@ paths:
       summary: 更新按钮权限
       tags:
       - IAM/按钮管理
+  /api/v1/hosts:
+    get:
+      description: 按名称、标签、IP、协议、操作系统分页筛选主机
+      parameters:
+      - description: 页码 (默认1)
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量 (默认20, 最大100)
+        in: query
+        name: page_size
+        type: integer
+      - description: 名称模糊匹配
+        in: query
+        name: name
+        type: string
+      - description: 标签精确匹配
+        in: query
+        name: label
+        type: string
+      - description: IP模糊匹配
+        in: query
+        name: host_ip
+        type: string
+      - description: 连接协议 (ssh/winrm)
+        in: query
+        name: protocol
+        type: string
+      - description: 操作系统 (linux/windows)
+        in: query
+        name: os_type
+        type: string
+      - description: 排序规则
+        in: query
+        name: order_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/cmdb.HostPageResult'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 主机列表
+      tags:
+      - CMDB/主机管理
+    post:
+      consumes:
+      - application/json
+      description: 创建主机记录；SSH 主机会先尝试部署免密公钥，WinRM 主机按配置校验证书连通性
+      parameters:
+      - description: 主机信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/cmdb.CreateHostReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/cmdb.HostResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "409":
+          description: 主机连接信息已存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 纳管主机
+      tags:
+      - CMDB/主机管理
+  /api/v1/hosts/{id}:
+    delete:
+      description: 软删除主机记录并清理 Ansible host_vars
+      parameters:
+      - description: 主机ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 主机不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 删除主机
+      tags:
+      - CMDB/主机管理
+    get:
+      description: 根据主键获取主机连接信息
+      parameters:
+      - description: 主机ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/cmdb.HostResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 主机不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取主机
+      tags:
+      - CMDB/主机管理
+    put:
+      consumes:
+      - application/json
+      description: 全量替换主机信息；连接参数变化时会重新执行免密公钥部署或 WinRM 校验
+      parameters:
+      - description: 主机ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 主机信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/cmdb.UpdateHostReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/cmdb.HostResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 主机不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "409":
+          description: 主机连接信息已存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 更新主机
+      tags:
+      - CMDB/主机管理
+  /api/v1/hosts/{id}/refresh-key:
+    post:
+      description: 重新连接 SSH 主机并重新记录主机公钥；用于主机重装或密钥轮换后恢复远程执行
+      parameters:
+      - description: 主机ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 刷新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/cmdb.HostResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 主机不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 刷新主机密钥
+      tags:
+      - CMDB/主机管理
   /api/v1/menus:
     get:
       description: 支持按名称、路径、状态筛选及分页排序
@@ -2307,6 +3164,924 @@ paths:
       summary: 更新角色
       tags:
       - IAM/角色管理
+  /api/v1/schedules:
+    get:
+      description: 按名称、启用状态、脚本、主机分页筛选计划任务
+      parameters:
+      - description: 页码 (默认1)
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量 (默认20, 最大100)
+        in: query
+        name: page_size
+        type: integer
+      - description: 名称模糊匹配
+        in: query
+        name: name
+        type: string
+      - description: 启用状态
+        in: query
+        name: is_enabled
+        type: boolean
+      - description: 脚本ID
+        in: query
+        name: script_id
+        type: integer
+      - description: 主机ID
+        in: query
+        name: host_id
+        type: integer
+      - description: 排序规则
+        in: query
+        name: order_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.SchedulePageResult'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 计划任务列表
+      tags:
+      - Job/计划任务
+    post:
+      consumes:
+      - application/json
+      description: 创建 cron 计划任务；启用时立即注册到调度器
+      parameters:
+      - description: 计划任务参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/job.CreateScheduleReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScheduleResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 创建计划任务
+      tags:
+      - Job/计划任务
+  /api/v1/schedules/{id}:
+    delete:
+      description: 删除计划任务并从调度器移除
+      parameters:
+      - description: 计划任务ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 计划任务不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 删除计划任务
+      tags:
+      - Job/计划任务
+    get:
+      description: 根据主键获取计划任务配置
+      parameters:
+      - description: 计划任务ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScheduleResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 计划任务不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取计划任务
+      tags:
+      - Job/计划任务
+    put:
+      consumes:
+      - application/json
+      description: 全量更新计划任务并重新注册 cron 条目
+      parameters:
+      - description: 计划任务ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 计划任务参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/job.UpdateScheduleReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScheduleResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 计划任务不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 更新计划任务
+      tags:
+      - Job/计划任务
+  /api/v1/schedules/{id}/disable:
+    post:
+      description: 停用计划任务并从调度器移除
+      parameters:
+      - description: 计划任务ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 停用成功
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 计划任务不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 停用计划任务
+      tags:
+      - Job/计划任务
+  /api/v1/schedules/{id}/enable:
+    post:
+      description: 启用计划任务并注册到调度器
+      parameters:
+      - description: 计划任务ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 启用成功
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 计划任务不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 启用计划任务
+      tags:
+      - Job/计划任务
+  /api/v1/schedules/{id}/run:
+    post:
+      description: 异步触发一次计划任务执行，立即返回；执行结果写入脚本执行记录
+      parameters:
+      - description: 计划任务ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: 已触发
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 计划任务不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 立即执行计划任务
+      tags:
+      - Job/计划任务
+  /api/v1/script-records:
+    get:
+      description: 按脚本、主机、状态、触发方式、执行人分页筛选执行记录
+      parameters:
+      - description: 页码 (默认1)
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量 (默认20, 最大100)
+        in: query
+        name: page_size
+        type: integer
+      - description: 脚本ID
+        in: query
+        name: script_id
+        type: integer
+      - description: 主机ID
+        in: query
+        name: host_id
+        type: integer
+      - description: 状态 (0-6)
+        in: query
+        name: status
+        type: integer
+      - description: 触发方式 (cron/api)
+        in: query
+        name: trigger_type
+        type: string
+      - description: 执行人
+        in: query
+        name: username
+        type: string
+      - description: 排序规则
+        in: query
+        name: order_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScriptRecordPageResult'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 执行记录列表
+      tags:
+      - Job/执行记录
+    post:
+      consumes:
+      - application/json
+      description: 创建执行记录并异步执行脚本；host_id 为 0 时在本机执行，否则通过 SSH/WinRM 在目标主机执行
+      parameters:
+      - description: 执行参数
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/job.CreateScriptRecordReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 已创建执行记录
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScriptRecordResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 脚本不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 触发脚本执行
+      tags:
+      - Job/执行记录
+  /api/v1/script-records/{id}:
+    get:
+      description: 根据主键获取脚本执行状态与结果
+      parameters:
+      - description: 执行记录ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScriptRecordResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 执行记录不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取执行记录
+      tags:
+      - Job/执行记录
+  /api/v1/script-records/{id}/cancel:
+    post:
+      description: 取消正在等待或运行的脚本执行
+      parameters:
+      - description: 执行记录ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 已取消
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 取消执行
+      tags:
+      - Job/执行记录
+  /api/v1/script-records/{id}/log:
+    get:
+      description: 下载脚本执行的 stdout/stderr 日志文件
+      parameters:
+      - description: 执行记录ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: 日志文件
+          schema:
+            type: file
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 记录或日志不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 下载执行日志
+      tags:
+      - Job/执行记录
+  /api/v1/scripts:
+    get:
+      description: 按项目、标签、语言、名称、状态分页筛选脚本
+      parameters:
+      - description: 页码 (默认1)
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量 (默认20, 最大100)
+        in: query
+        name: page_size
+        type: integer
+      - description: 项目精确匹配
+        in: query
+        name: project
+        type: string
+      - description: 标签精确匹配
+        in: query
+        name: label
+        type: string
+      - description: 语言精确匹配
+        in: query
+        name: language
+        type: string
+      - description: 名称模糊匹配
+        in: query
+        name: name
+        type: string
+      - description: 启用状态
+        in: query
+        name: status
+        type: boolean
+      - description: 排序规则
+        in: query
+        name: order_by
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScriptPageResult'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 脚本列表
+      tags:
+      - Job/脚本管理
+    post:
+      consumes:
+      - application/json
+      description: 将脚本正文写入配置的存储后端（Git 仓库或本地目录），并保存元数据
+      parameters:
+      - description: 脚本信息与正文
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/job.CreateScriptReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 创建成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScriptResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "409":
+          description: 同名脚本已存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 创建脚本
+      tags:
+      - Job/脚本管理
+  /api/v1/scripts/{id}:
+    delete:
+      description: 删除脚本元数据及存储后端中的正文
+      parameters:
+      - description: 脚本ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 删除成功
+          schema:
+            $ref: '#/definitions/common.Response'
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 脚本不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 删除脚本
+      tags:
+      - Job/脚本管理
+    get:
+      description: 根据主键获取脚本元数据
+      parameters:
+      - description: 脚本ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScriptResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 脚本不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取脚本
+      tags:
+      - Job/脚本管理
+    put:
+      consumes:
+      - application/json
+      description: 全量更新脚本元数据；传入 content 时同时替换仓库中的正文
+      parameters:
+      - description: 脚本ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 脚本信息
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/job.UpdateScriptReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 更新成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScriptResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 脚本不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "409":
+          description: 同名脚本已存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 更新脚本
+      tags:
+      - Job/脚本管理
+  /api/v1/scripts/{id}/content:
+    get:
+      description: 从脚本存储后端读取正文
+      parameters:
+      - description: 脚本ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 查询成功
+          schema:
+            allOf:
+            - $ref: '#/definitions/common.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/job.ScriptContentResp'
+              type: object
+        "400":
+          description: 参数不合法
+          schema:
+            $ref: '#/definitions/common.Response'
+        "401":
+          description: 未登录或登录已失效
+          schema:
+            $ref: '#/definitions/common.Response'
+        "403":
+          description: 无操作权限
+          schema:
+            $ref: '#/definitions/common.Response'
+        "404":
+          description: 脚本不存在
+          schema:
+            $ref: '#/definitions/common.Response'
+        "500":
+          description: 内部服务异常
+          schema:
+            $ref: '#/definitions/common.Response'
+      security:
+      - BearerAuth: []
+      summary: 获取脚本正文
+      tags:
+      - Job/脚本管理
   /api/v1/users:
     get:
       description: 支持按用户名、角色ID、状态条件筛选及分页排序

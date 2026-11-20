@@ -40,12 +40,36 @@ type Bootstrap struct {
 	Security *SecurityConfig `yaml:"security"`
 	IAM      *IAMConfig      `yaml:"iam"`
 	Job      *JobConfig      `yaml:"job"`
+	CMDB     *CMDBConfig     `yaml:"cmdb"`
 	version  string
 }
 
 // JobConfig 定时任务模块配置
 type JobConfig struct {
-	ScriptRepo *ScriptRepoConfig `yaml:"script_repo"`
+	// MaxConcurrentScripts caps simultaneously running script executions.
+	// 0 uses the built-in default (10).
+	MaxConcurrentScripts int               `yaml:"max_concurrent_scripts"`
+	ScriptRepo           *ScriptRepoConfig `yaml:"script_repo"`
+}
+
+// CMDBConfig 主机管理模块配置。
+// SSH 凭据仅用于新主机接入（部署免密公钥），不会写入主机记录。
+type CMDBConfig struct {
+	SSHTimeout              time.Duration   `yaml:"ssh_timeout"`
+	SSHPrivateKey           string          `yaml:"ssh_private_key"` // PEM text or path
+	SSHPrivateKeyPassphrase string          `yaml:"ssh_private_key_passphrase"`
+	SSHPassword             string          `yaml:"ssh_password"`
+	PublicKeys              []string        `yaml:"public_keys"` // authorized_keys lines or base64 blobs
+	WinRM                   CMDBWinRMConfig `yaml:"winrm"`
+}
+
+// CMDBWinRMConfig configures WinRM onboarding (certificate verification).
+type CMDBWinRMConfig struct {
+	UseTLS     bool   `yaml:"use_tls"`
+	Insecure   bool   `yaml:"insecure_skip_verify"`
+	CACert     string `yaml:"ca_cert"`     // PEM text or path
+	ClientCert string `yaml:"client_cert"` // PEM text or path
+	ClientKey  string `yaml:"client_key"`  // PEM text or path
 }
 
 // ScriptRepoConfig 脚本内容所在的 Git 仓库配置。
@@ -63,6 +87,8 @@ type ScriptRepoConfig struct {
 	Password         string        `yaml:"password"`
 	SSHKeyPath       string        `yaml:"ssh_key_path"`
 	SSHKeyPassphrase string        `yaml:"ssh_key_passphrase"`
+	KnownHosts       string        `yaml:"known_hosts"`  // known_hosts file for SSH remotes
+	SSHHostKey       string        `yaml:"ssh_host_key"` // pinned SSH host key (authorized_keys line)
 	InsecureSkipTLS  bool          `yaml:"insecure_skip_tls"`
 }
 
@@ -134,6 +160,26 @@ func (b *Bootstrap) Validate() error {
 		}
 		if sr.Timeout < 0 {
 			return fmt.Errorf("job.script_repo.timeout cannot be negative")
+		}
+	}
+	if b.Job != nil && b.Job.MaxConcurrentScripts < 0 {
+		return fmt.Errorf("job.max_concurrent_scripts cannot be negative")
+	}
+	if b.CMDB != nil {
+		if b.CMDB.SSHTimeout < 0 {
+			return fmt.Errorf("cmdb.ssh_timeout cannot be negative")
+		}
+		hasCert := strings.TrimSpace(b.CMDB.WinRM.ClientCert) != ""
+		hasKey := strings.TrimSpace(b.CMDB.WinRM.ClientKey) != ""
+		if hasCert != hasKey {
+			return fmt.Errorf("cmdb.winrm.client_cert and cmdb.winrm.client_key must be configured together")
+		}
+		// Remote execution is passwordless: onboarding needs the private key so
+		// the same identity can later run scripts. ssh_password is only a
+		// first-contact fallback for installing the key and is never persisted.
+		if strings.TrimSpace(b.CMDB.SSHPrivateKey) == "" &&
+			(strings.TrimSpace(b.CMDB.SSHPassword) != "" || len(b.CMDB.PublicKeys) > 0) {
+			return fmt.Errorf("cmdb.ssh_private_key is required for passwordless SSH execution")
 		}
 	}
 	if b.Security == nil {

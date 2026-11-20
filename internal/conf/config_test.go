@@ -182,3 +182,20 @@ func TestSigningMethod(t *testing.T) {
 	_, err = SigningMethod("none")
 	assert.Error(t, err)
 }
+
+func TestBootstrapValidate_CMDBPasswordless(t *testing.T) {
+	// Password-only onboarding cannot support passwordless execution.
+	bc := minimalBootstrap(t)
+	bc.CMDB = &CMDBConfig{SSHPassword: "secret"}
+	assert.Error(t, bc.Validate())
+
+	// Public-key onboarding also needs the execution private key.
+	bc = minimalBootstrap(t)
+	bc.CMDB = &CMDBConfig{PublicKeys: []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest"}}
+	assert.Error(t, bc.Validate())
+
+	// A private key satisfies both onboarding and execution.
+	bc = minimalBootstrap(t)
+	bc.CMDB = &CMDBConfig{SSHPrivateKey: "/etc/grain/id_ed25519"}
+	require.NoError(t, bc.Validate())
+}

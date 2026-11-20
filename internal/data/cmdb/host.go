@@ -42,6 +42,7 @@ func toBizHost(po hostPO) biz.Host {
 		PyPath:    po.PyPath,
 		Remark:    po.Remark,
 		OSType:    po.OSType,
+		HostKey:   po.SSHHostKey,
 		CreatedAt: po.CreatedAt,
 		UpdatedAt: po.UpdatedAt,
 	}
@@ -56,15 +57,16 @@ func newHostPO(do biz.Host) hostPO {
 				UpdatedAt: do.UpdatedAt,
 			},
 		},
-		Name:     do.Name,
-		Label:    do.Label,
-		HostIP:   do.HostIP,
-		HostPort: do.HostPort,
-		HostUser: do.HostUser,
-		Protocol: do.Protocol,
-		PyPath:   do.PyPath,
-		Remark:   do.Remark,
-		OSType:   do.OSType,
+		Name:       do.Name,
+		Label:      do.Label,
+		HostIP:     do.HostIP,
+		HostPort:   do.HostPort,
+		HostUser:   do.HostUser,
+		Protocol:   do.Protocol,
+		PyPath:     do.PyPath,
+		Remark:     do.Remark,
+		OSType:     do.OSType,
+		SSHHostKey: do.HostKey,
 	}
 }
 

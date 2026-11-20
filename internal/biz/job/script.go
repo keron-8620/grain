@@ -441,14 +441,29 @@ func scriptRepoPath(script *Script) (string, error) {
 	return filepath.Join(project, label, name), nil
 }
 
+// DefaultScriptRootDir returns the default directory of the script working
+// copy. It matches the layout used by the built-in local store.
+func DefaultScriptRootDir() string {
+	return filepath.Join(conf.StorageDir, "script")
+}
+
 // scriptDiskPath derives the full filesystem path where the script is stored
 // on disk for execution.
 func scriptDiskPath(script *Script) (string, error) {
+	return scriptDiskPathIn(script, "")
+}
+
+// scriptDiskPathIn derives the script path under an explicit working-copy root.
+// An empty root falls back to DefaultScriptRootDir.
+func scriptDiskPathIn(script *Script, root string) (string, error) {
 	relPath, err := scriptRepoPath(script)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(conf.StorageDir, "script", relPath), nil
+	if strings.TrimSpace(root) == "" {
+		root = DefaultScriptRootDir()
+	}
+	return filepath.Join(root, relPath), nil
 }
 
 func validPathSegment(value, field string) (string, error) {

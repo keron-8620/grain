@@ -1,6 +1,11 @@
 # grain
 
-A single-node Go/Gin IAM scaffold providing users, roles, menus, buttons, API permissions, JWT login and refresh-token rotation.
+A single-node Go/Gin operations platform: IAM (users, roles, menus, buttons, API permissions, JWT login and refresh-token rotation), script scheduling, and host inventory (CMDB).
+
+> **Deployment: single-node only. Multi-instance / horizontal scaling is not supported.**
+> The cron scheduler, Casbin policies, replay-protection nonces and login-lockout counters are
+> process-local; replicas would run schedules multiple times and diverge on authorization. Do not
+> share one database between multiple grain instances or put them behind a load balancer.
 
 ## Requirements
 
@@ -32,9 +37,9 @@ against the config file's directory.
    Never ship the development key.
 2. Run `grain -conf ... -migrate` as a separate deployment step.
    Use `-exec-sql /path/to/file.sql` for additional SQL.
-3. Enable Redis for multi-instance deployments. Redis stores the token-version hot cache and
-   refresh-token rotation/family revocation state; the database remains the authoritative
-   revocation baseline.
+3. Optionally enable Redis. Redis can hold the token-version hot cache and refresh-token
+   rotation/family revocation state so it survives restarts; the database remains the
+   authoritative revocation baseline. Redis does not enable multi-instance deployment.
 4. Restrict CORS/hosts and disable Swagger/pprof/metrics exposure when not needed.
 
 ## Authorization model
@@ -49,9 +54,9 @@ At startup `ReconcileIAMPolicies` rebuilds every `iam:*` rule from the relationa
 and preserves rules owned by other authorities. Casbin no longer uses the string adapter as
 durable storage.
 
-**Limitation:** runtime policy mutations only update the instance handling the request. With
-multiple instances, other replicas pick up changes on restart (or after a future
-`iam_policy_revision` based synchronizer); keep IAM writes on a single instance for now.
+**Single-node note:** Casbin policies live in the process and are rebuilt from the IAM tables at
+startup; runtime changes apply to this process immediately. There is no cross-instance sync, which
+is why multi-instance deployment is not supported.
 
 ## Notes
 
@@ -65,7 +70,7 @@ multiple instances, other replicas pick up changes on restart (or after a future
   - `0`: at least 6 characters;
   - `1`: at least 8 characters;
   - `2`: at least 8 characters with letters and digits;
-  - `3`: at least 10 characters with upper/lowercase letters, digits and a symbol.
+  - `3`: at least 12 characters with upper/lowercase letters, digits and a symbol.
 
   The policy applies to user creation, password changes, admin resets and password updates.
   Passwords longer than 72 bytes are rejected because bcrypt ignores the remainder; passwords
@@ -74,6 +79,37 @@ multiple instances, other replicas pick up changes on restart (or after a future
   account. Password/role changes and disabling revoke existing sessions.
 - `security.token.refresh_method` must currently match `access_method`; access and refresh
   tokens share the same signing algorithm and key.
+
+`sql/database.sql` seeds the default administrator `admin / Admin@123456` and grants all API
+permissions. Change the password immediately after the first login; run the script only once on a
+fresh database.
+
+## Scripts, schedules and hosts
+
+- **Scripts**: metadata lives in `job_script`; source is stored in the configured Git repository
+  (`job.script_repo.enable: true`) or in `storage/script` (`enable: false`, the single-node default).
+  API: `/api/v1/scripts`, including `GET /api/v1/scripts/{id}/content`.
+- **Schedules**: cron expressions at `/api/v1/schedules`, with create/update/delete,
+  enable/disable and run-now (`/schedules/{id}/run`).
+- **Executions**: `/api/v1/script-records` for triggering, listing, canceling and downloading logs
+  (`/script-records/{id}/log`). `host_id=0` runs locally; otherwise SSH/WinRM is used.
+- **Hosts**: `/api/v1/hosts`; SSH onboarding deploys the configured public keys and exports Ansible
+  host vars to `storage/host_vars`. At startup every host's vars are rewritten from the database,
+  removing legacy `ansible_password` and inline PEM fields.
+- **Git over SSH**: host keys are verified. The default known_hosts paths are used unless
+  `job.script_repo.known_hosts` points to a file or `job.script_repo.ssh_host_key` pins the server
+  key; without either, the SSH repository is rejected at startup.
+- **SSH host keys**: create/update skips verification and pins the server key (TOFU); later remote
+  executions verify against it and refuse a mismatch. After a host rebuild or key rotation call
+  `POST /api/v1/hosts/{id}/refresh-key`; hosts created before this feature need one refresh too.
+- These endpoints reuse IAM JWT authentication and Casbin authorization. Job/CMDB routes are added
+  to the `iam_api` catalog at startup, so a role must be granted the matching API permissions first.
+- Configuration lives under `job` / `cmdb` in `config/config.yaml`. Remote execution is
+  passwordless: SSH reuses `cmdb.ssh_private_key` (optional
+  `ssh_private_key_passphrase`), WinRM uses client certificates only. host_vars stores key/cert
+  **paths**, never passwords or key material; the database stores no host password.
+  `cmdb.ssh_password` is only a first-contact fallback for installing the public key and is never
+  persisted.
 
 ## Tests
 

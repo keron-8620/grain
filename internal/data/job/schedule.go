@@ -44,6 +44,7 @@ func toBizSchedule(po schedulePO) biz.Schedule {
 		RetryInterval: po.RetryInterval,
 		MaxRetries:    po.MaxRetries,
 		Username:      po.Username,
+		HostID:        po.HostID,
 		ScriptID:      po.ScriptID,
 		CreatedAt:     po.CreatedAt,
 		UpdatedAt:     po.UpdatedAt,
@@ -76,6 +77,7 @@ func newSchedulePO(do biz.Schedule) schedulePO {
 		RetryInterval: do.RetryInterval,
 		MaxRetries:    do.MaxRetries,
 		Username:      do.Username,
+		HostID:        do.HostID,
 		ScriptID:      scriptID,
 	}
 }
@@ -196,6 +198,77 @@ func (r *scheduleRepo) Update(ctx context.Context, do *biz.Schedule) (*biz.Sched
 	return r.FindByID(ctx, do.ID)
 }
 
+// Updates applies multiple schedule updates in a single transaction. Either all
+// records are updated or none are.
+func (r *scheduleRepo) Updates(ctx context.Context, dos []biz.Schedule) ([]biz.Schedule, error) {
+	if len(dos) == 0 {
+		return nil, nil
+	}
+	for i := range dos {
+		if dos[i].ID == 0 {
+			return nil, errors.New("update schedules: ID must not be 0")
+		}
+		if dos[i].Name == "" {
+			return nil, errors.New("update schedules: name cannot be empty")
+		}
+	}
+
+	if r.logger.Enabled(ctx, slog.LevelDebug) {
+		r.logger.DebugContext(
+			ctx,
+			"update schedules: request details",
+			slog.Int("count", len(dos)),
+		)
+	}
+
+	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpWrite, "update schedules", func(dbCtx context.Context) error {
+		return db.WithTransaction(dbCtx, r.data.gormdb, func(tx *gorm.DB) error {
+			for i := range dos {
+				po := newSchedulePO(dos[i])
+				res := tx.Model(&schedulePO{}).Where("id = ?", dos[i].ID).Updates(po.ToUpdateMap())
+				if res.Error != nil {
+					return res.Error
+				}
+				if res.RowsAffected == 0 {
+					// Some databases report zero affected rows for a no-op
+					// update, so distinguish that from a missing record.
+					var count int64
+					if err := tx.Model(&schedulePO{}).Where("id = ?", dos[i].ID).Count(&count).Error; err != nil {
+						return err
+					}
+					if count == 0 {
+						return gorm.ErrRecordNotFound
+					}
+				}
+			}
+			return nil
+		})
+	}, slog.Int("count", len(dos))); err != nil {
+		return nil, err
+	}
+
+	ids := make([]uint64, 0, len(dos))
+	for i := range dos {
+		ids = append(ids, dos[i].ID)
+	}
+	found, err := r.FindByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[uint64]biz.Schedule, len(found))
+	for i := range found {
+		byID[found[i].ID] = found[i]
+	}
+	res := make([]biz.Schedule, 0, len(dos))
+	for i := range dos {
+		if schedule, ok := byID[dos[i].ID]; ok {
+			res = append(res, schedule)
+		}
+	}
+	return res, nil
+}
+
+// Delete method for single-record callers.
 func (r *scheduleRepo) Delete(ctx context.Context, id uint64) error {
 	if id == 0 {
 		return errors.New("delete schedule: ID must not be 0")
@@ -204,7 +277,7 @@ func (r *scheduleRepo) Delete(ctx context.Context, id uint64) error {
 	if r.logger.Enabled(ctx, slog.LevelDebug) {
 		r.logger.DebugContext(
 			ctx,
-			"delete schedule: primary key ID",
+			"delete schedules: primary key IDs",
 			slog.Uint64("id", id),
 		)
 	}
@@ -221,6 +294,48 @@ func (r *scheduleRepo) Delete(ctx context.Context, id uint64) error {
 		return errors.New("delete schedule: record not found")
 	}
 	return nil
+}
+
+// Delete deletes the schedules with the given IDs in one transaction. Either all
+// records exist and are deleted, or none are.
+func (r *scheduleRepo) DeleteByIDS(ctx context.Context, ids []uint64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	uniqueIDs := make([]uint64, 0, len(ids))
+	seen := make(map[uint64]struct{}, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			return errors.New("delete schedules: ID must not be 0")
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+
+	if r.logger.Enabled(ctx, slog.LevelDebug) {
+		r.logger.DebugContext(
+			ctx,
+			"delete schedules: primary key IDs",
+			slog.Int("count", len(uniqueIDs)),
+		)
+	}
+
+	return db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpWrite, "delete schedules", func(dbCtx context.Context) error {
+		return db.WithTransaction(dbCtx, r.data.gormdb, func(tx *gorm.DB) error {
+			res := tx.Where("id IN ?", uniqueIDs).Delete(&schedulePO{})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected != int64(len(uniqueIDs)) {
+				return gorm.ErrRecordNotFound
+			}
+			return nil
+		})
+	}, slog.Int("count", len(uniqueIDs)))
 }
 
 func (r *scheduleRepo) FindByID(ctx context.Context, id uint64) (*biz.Schedule, error) {

@@ -44,6 +44,7 @@ func toBizScriptRecord(po scriptRecordPO) biz.ScriptRecord {
 		LogName:      po.LogName,
 		ErrorMessage: po.ErrorMessage,
 		Username:     po.Username,
+		HostID:       po.HostID,
 		ScriptID:     po.ScriptID,
 		CreatedAt:    po.CreatedAt,
 		UpdatedAt:    po.UpdatedAt,
@@ -75,6 +76,7 @@ func newScriptRecordPO(do biz.ScriptRecord) scriptRecordPO {
 		LogName:      do.LogName,
 		ErrorMessage: do.ErrorMessage,
 		Username:     do.Username,
+		HostID:       do.HostID,
 		ScriptID:     scriptID,
 	}
 }
@@ -149,6 +151,25 @@ func (r *scriptRecordRepo) Update(ctx context.Context, id uint64, status, code i
 	}
 
 	return nil
+}
+
+func (r *scriptRecordRepo) MarkInterrupted(ctx context.Context, message string) (int64, error) {
+	updates := map[string]any{
+		"status":        int(biz.ScriptRecordStatusCrashed),
+		"error_message": message,
+		"updated_at":    time.Now(),
+	}
+
+	var rowsAffected int64
+	if err := db.RunDBOp(ctx, r.logger, &r.data.dbTimeout, &r.data.dbSlow, db.OpWrite, "mark interrupted script records", func(dbCtx context.Context) error {
+		var upErr error
+		rowsAffected, upErr = db.DBUpdateTx(dbCtx, r.data.gormdb, &scriptRecordPO{}, updates,
+			"status IN ?", []int{int(biz.ScriptRecordStatusPending), int(biz.ScriptRecordStatusRunning)})
+		return upErr
+	}, slog.String("message", message)); err != nil {
+		return 0, err
+	}
+	return rowsAffected, nil
 }
 
 func (r *scriptRecordRepo) FindByID(ctx context.Context, id uint64) (*biz.ScriptRecord, error) {

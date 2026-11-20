@@ -3,7 +3,7 @@
 # 该文件可直接用于本地开发。生产环境请务必：
 #   1. 替换 security.token.private_key 为受控 Secret 中注入的私钥路径；
 #   2. 使用 `grain -migrate` 作为独立部署步骤执行数据库迁移；
-#   3. 按需启用 redis，以便多实例共享刷新令牌轮换与吊销状态；
+#   3. 按需启用 redis，用于缓存刷新令牌轮换与吊销状态（本项目不支持多实例）；
 #   4. 限制 cors.allow_origins 并开启 security.host_guard。
 
 server:
@@ -32,7 +32,7 @@ database:
   max_idle_conns: 10
   max_open_conns: 100
 
-# 多实例部署时启用 Redis；单机可保持 enable: false。
+# 单机部署可选；启用后缓存 token 状态。注意：本项目不支持多实例。
 redis:
   enable: false
   addr: "127.0.0.1:6379"
@@ -81,17 +81,20 @@ iam:
     lock_duration: 15m
   password:
     # 0=至少6位；1=至少8位；2=至少8位且含字母和数字；
-    # 3=至少10位且含大写、小写、数字和特殊字符。
+    # 3=至少12位且含大写、小写、数字和特殊字符。
     strength_level: 1
   
 
 # 脚本正文统一提交到 Git 仓库，数据库只保存元数据。
+# script_repo.enable=false 时使用本地目录存储（storage/script），便于单机开发。
 job:
+  # 同时执行的脚本数量上限（0 表示使用内置默认值 10）。
+  max_concurrent_scripts: 10
   script_repo:
     enable: false
     url: ""              # 例如 https://github.com/org/scripts.git 或 git@host:org/scripts.git
     branch: "main"
-    dir: "storage/scripts"  # 本地工作副本目录，需可写
+    dir: "storage/script"  # 本地工作副本目录，需可写；也是本地执行的脚本根目录
     timeout: 60s
     author_name: "grain"
     author_email: "grain@localhost"
@@ -100,5 +103,24 @@ job:
     password: ""         # http 密码或访问令牌
     ssh_key_path: ""     # ssh 私钥路径；留空则使用 ssh-agent
     ssh_key_passphrase: ""
+    known_hosts: ""      # SSH 仓库 known_hosts 文件；留空使用 ~/.ssh/known_hosts 或 /etc/ssh/ssh_known_hosts
+    ssh_host_key: ""     # 也可直接固定仓库服务器公钥（authorized_keys 一行），优先于 known_hosts
     insecure_skip_tls: false
 
+# 主机管理（CMDB）配置。
+# 新增/修改 SSH 主机时跳过主机密钥校验并记录指纹；之后的远程执行使用该指纹和
+# ssh_private_key 完成免密认证。host_vars 与数据库只保存路径/公钥，不保存密码或私钥内容。
+# ssh_password 仅用于首次接入时安装公钥，不落库，执行阶段不使用。
+# 未配置 ssh_private_key 时仍可录入主机，但无法接入和远程执行。
+cmdb:
+  ssh_timeout: 15s
+  ssh_private_key: ""            # 必填（使用 SSH 主机时）：PEM 文本或文件路径，执行阶段复用该私钥
+  ssh_private_key_passphrase: "" # 私钥口令；接入与远程执行共用，不落库
+  ssh_password: ""               # 仅首次接入时用于安装公钥，不落库；执行阶段不使用密码
+  public_keys: []                # authorized_keys 行或 base64 公钥；留空时自动使用 ssh_private_key 的公钥
+  winrm:
+    use_tls: true
+    insecure_skip_verify: false
+    ca_cert: ""                  # PEM 文本或文件路径
+    client_cert: ""              # 客户端证书文件路径（mTLS，WinRM 执行唯一认证方式）
+    client_key: ""               # 客户端私钥文件路径（mTLS）

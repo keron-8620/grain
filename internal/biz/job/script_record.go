@@ -1112,7 +1112,11 @@ func (uc *ScriptRecordUseCache) executeWinRM(
 	_, _ = fmt.Fprintf(logFile, "[%s] 远程执行 PowerShell 脚本: %s %s\n",
 		time.Now().Format(time.RFC3339), fileName, strings.Join(args, " "))
 
-	exitCode, runErr := client.RunWithContext(ctx, command, logFile, logFile)
+	encoded, err := encodeWinRMPowerShell(command)
+	if err != nil {
+		return uc.failRemoteExecution(ctx, record, logFile, execStartTime, err)
+	}
+	exitCode, runErr := client.RunWithContext(ctx, encoded, logFile, logFile)
 	if exitCode > 0 {
 		record.ExitCode = exitCode
 	}
@@ -1356,7 +1360,11 @@ func (uc *ScriptRecordUseCache) uploadScriptToWinRM(
 
 	if encoded == "" {
 		command := pathExpr + "; [IO.File]::WriteAllBytes($p, [byte[]]@())"
-		exitCode, err := client.RunWithContext(ctx, command, io.Discard, io.Discard)
+		encodedCommand, encErr := encodeWinRMPowerShell(command)
+		if encErr != nil {
+			return encErr
+		}
+		exitCode, err := client.RunWithContext(ctx, encodedCommand, io.Discard, io.Discard)
 		if err != nil {
 			return fmt.Errorf("上传脚本到远程主机失败: %w", err)
 		}
@@ -1384,7 +1392,11 @@ func (uc *ScriptRecordUseCache) uploadScriptToWinRM(
 				"; try { $fs.Write($b, 0, $b.Length) } finally { $fs.Dispose() }"
 		}
 
-		exitCode, err := client.RunWithContext(ctx, command, io.Discard, io.Discard)
+		encodedCommand, encErr := encodeWinRMPowerShell(command)
+		if encErr != nil {
+			return encErr
+		}
+		exitCode, err := client.RunWithContext(ctx, encodedCommand, io.Discard, io.Discard)
 		if err != nil {
 			return fmt.Errorf("上传脚本到远程主机失败 (offset=%d): %w", offset, err)
 		}
@@ -1405,7 +1417,12 @@ func (uc *ScriptRecordUseCache) cleanupWinRMTempFile(ctx context.Context, client
 
 	command := "$p = Join-Path $env:TEMP " + powershellSingleQuote(fileName) +
 		"; Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue"
-	if _, err := client.RunWithContext(cleanupCtx, command, io.Discard, io.Discard); err != nil {
+	encodedCommand, encErr := encodeWinRMPowerShell(command)
+	if encErr != nil {
+		uc.logger.DebugContext(cleanupCtx, "脚本执行:WinRM 清理命令编码失败", slog.Any("error", encErr))
+		return
+	}
+	if _, err := client.RunWithContext(cleanupCtx, encodedCommand, io.Discard, io.Discard); err != nil {
 		uc.logger.DebugContext(cleanupCtx, "脚本执行:清理WinRM远程脚本失败", slog.Any("error", err))
 	}
 }
@@ -1437,6 +1454,10 @@ func (uc *ScriptRecordUseCache) buildSSHRemoteCommand(
 // buildWinRMRemoteCommand composes the PowerShell wrapper that prepares the
 // working directory, exports the environment, runs the uploaded script with
 // its arguments, and propagates the script exit code.
+//
+// The returned string is PowerShell code, not a cmd.exe command line: callers
+// MUST pass it through encodeWinRMPowerShell before handing it to the winrm
+// client.
 func (uc *ScriptRecordUseCache) buildWinRMRemoteCommand(
 	record *ScriptRecord,
 	fileName string,
@@ -1468,6 +1489,21 @@ func (uc *ScriptRecordUseCache) buildWinRMRemoteCommand(
 	)
 
 	return strings.Join(parts, "; ")
+}
+
+// encodeWinRMPowerShell wraps a PowerShell script into an encoded command so
+// that the WinRM "cmd" shell only sees `powershell.exe -EncodedCommand <b64>`.
+//
+// Passing a raw command string is unsafe: masterzen/winrm executes it through
+// cmd.exe, where PowerShell single-quote quoting does not apply, so values such
+// as work_dir / env values / args could append arbitrary commands with `&`.
+// Every WinRM execution path must go through this helper.
+func encodeWinRMPowerShell(script string) (string, error) {
+	encoded := winrm.Powershell(script)
+	if encoded == "" {
+		return "", errorx.CodeInvalidParam.Error("WinRM 脚本编码失败")
+	}
+	return encoded, nil
 }
 
 // buildRemoteEnvVars merges the always-present job variables with the user

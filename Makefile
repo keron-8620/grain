@@ -140,17 +140,33 @@ run:  ## 运行应用
 	@echo "运行应用..."
 	@$(TOOL_ENV) go run main.go
 
-dist: build  ## 打包发布包 (tar.gz)
+dist: build  ## 打包发布包 (tar.gz)：自动排除私钥、.env、数据库等敏感文件
 	@echo "为 resource/*/script/ 添加可执行权限..."
 	@find resource -path '*/script/*' -type f -exec chmod +x {} + 2>/dev/null || true
+	@echo "检查仓库是否仍跟踪敏感文件..."
+	@if git ls-files '*.pem' '*.key' '*.crt' '*.p12' '*.pfx' '*.db' '.env' '.env.*' | grep -q .; then \
+		echo "拒绝打包：仓库仍在跟踪敏感文件，请先从索引移除："; \
+		git ls-files '*.pem' '*.key' '*.crt' '*.p12' '*.pfx' '*.db' '.env' '.env.*'; \
+		exit 1; \
+	fi
 	@echo "打包为 artweb-$(VERSION).tar.gz ..."
-	@mkdir -p /tmp/artweb-dist/artweb-$(VERSION)
+	@rm -rf /tmp/artweb-dist && mkdir -p /tmp/artweb-dist/artweb-$(VERSION)
 	@for item in config bin .env cmd sql resource html README.md; do \
 		if [ -e "$$item" ]; then \
 			cp -r "$$item" /tmp/artweb-dist/artweb-$(VERSION)/; \
 		fi \
 	done
+	@find /tmp/artweb-dist -type f \( \
+		-name '*.pem' -o -name '*.key' -o -name '*.crt' -o -name '*.p12' -o -name '*.pfx' \
+		-o -name '*.db' -o -name '*.sqlite' -o -name '.env' -o -name '.env.*' -o -name 'coverage.html' \
+	\) -delete
+	@find /tmp/artweb-dist -type d \( -name '.git' -o -name 'logs' \) -prune -exec rm -rf {} + 2>/dev/null || true
 	@tar -czf artweb-$(VERSION).tar.gz -C /tmp/artweb-dist artweb-$(VERSION)
+	@if tar -tzf artweb-$(VERSION).tar.gz | grep -Eq '(\.pem|\.key|\.crt|\.p12|\.pfx|\.db|\.sqlite)$$|(^|/)\.env(\.|$$)|/coverage\.html$$'; then \
+		echo "发布包包含敏感文件，已删除产物并中止"; \
+		rm -f artweb-$(VERSION).tar.gz; \
+		exit 1; \
+	fi
 	@rm -rf /tmp/artweb-dist
 	@echo "打包成功: artweb-$(VERSION).tar.gz ($$(du -h artweb-$(VERSION).tar.gz | awk '{print $$1}'))"
 

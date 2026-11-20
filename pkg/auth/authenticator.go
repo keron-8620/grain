@@ -404,10 +404,18 @@ func (a *Authenticator) ParseAndVerifyToken(tokenString string) (*JwtClaims, err
 	return a.ParseAndVerifyTokenContext(context.Background(), tokenString)
 }
 
-// ParseAndVerifyTokenContext parses and verifies the JWT signature and claim constraints with context awareness.
-// If key refresh is required (via JWKSRefresher), the provided ctx is passed to FetchOnDemand to honor
-// timeouts and cancellations.
+// ParseAndVerifyTokenContext parses and verifies an access token. It is the
+// access-token entry point used by the HTTP middleware; refresh tokens must be
+// verified with ParseAndVerifyTokenOfType(..., TokenTypeRefresh).
 func (a *Authenticator) ParseAndVerifyTokenContext(ctx context.Context, tokenString string) (*JwtClaims, error) {
+	return a.ParseAndVerifyTokenOfType(ctx, tokenString, TokenTypeAccess)
+}
+
+// ParseAndVerifyTokenOfType parses and verifies the JWT signature and claim
+// constraints with context awareness, then requires the token type to match
+// expected. If key refresh is required (via JWKSRefresher), the provided ctx is
+// passed to FetchOnDemand to honor timeouts and cancellations.
+func (a *Authenticator) ParseAndVerifyTokenOfType(ctx context.Context, tokenString string, expected TokenType) (*JwtClaims, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -468,8 +476,8 @@ func (a *Authenticator) ParseAndVerifyTokenContext(ctx context.Context, tokenStr
 		return nil, wrapAuthError(sentinel, err, "invalid token")
 	}
 
-	if claims.Type != TokenTypeAccess {
-		return nil, wrapAuthError(ErrTokenTypeMismatch, nil, "token type must be access", "actual_type", claims.Type)
+	if claims.Type != expected {
+		return nil, wrapAuthError(ErrTokenTypeMismatch, nil, "token type must be "+string(expected), "actual_type", claims.Type)
 	}
 
 	if claims.UserID == 0 || claims.Username == "" || claims.ID == "" {

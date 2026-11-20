@@ -120,14 +120,22 @@ func (m *defaultTokenManager) sign(claims *auth.JwtClaims) (string, error) {
 	return tok.SignedString(m.cfg.SigningKey)
 }
 
+// VerifyToken verifies a refresh token. Callers use it for /auth/refresh and
+// for resolving the refresh-token jti on logout; access tokens are verified by
+// the HTTP middleware through Authenticator.ParseAndVerifyTokenContext.
 func (m *defaultTokenManager) VerifyToken(ctx context.Context, tokenStr string) (*auth.JwtClaims, error) {
 	if m.cfg.Authenticator != nil {
-		return m.cfg.Authenticator.ParseAndVerifyTokenContext(ctx, tokenStr)
+		return m.cfg.Authenticator.ParseAndVerifyTokenOfType(ctx, tokenStr, auth.TokenTypeRefresh)
 	}
 
 	parserOptions := []jwt.ParserOption{
 		jwt.WithIssuer(m.cfg.Issuer),
 		jwt.WithAudience(m.cfg.Audience),
+		// Without WithExpirationRequired a token signed without exp would be
+		// accepted forever. Keep the fallback path as strict as the
+		// Authenticator-based path.
+		jwt.WithExpirationRequired(),
+		jwt.WithValidMethods([]string{m.cfg.SigningMethod.Alg()}),
 	}
 
 	tok, err := jwt.ParseWithClaims(tokenStr, &auth.JwtClaims{}, func(t *jwt.Token) (any, error) {
@@ -142,6 +150,9 @@ func (m *defaultTokenManager) VerifyToken(ctx context.Context, tokenStr string) 
 	claims, ok := tok.Claims.(*auth.JwtClaims)
 	if !ok || !tok.Valid {
 		return nil, auth.ErrTokenInvalid
+	}
+	if claims.Type != auth.TokenTypeRefresh {
+		return nil, auth.ErrTokenTypeMismatch
 	}
 	return claims, nil
 }
@@ -470,6 +481,9 @@ func (uc *AuthUseCase) RefreshToken(ctx context.Context, refreshTokenStr string)
 	if err != nil {
 		if errors.Is(err, auth.ErrTokenExpired) || errors.Is(err, jwt.ErrTokenExpired) {
 			return nil, errorx.CodeTokenExpired.Error("刷新令牌已过期，请重新登录")
+		}
+		if errors.Is(err, auth.ErrTokenTypeMismatch) {
+			return nil, errorx.CodeTokenTypeMismatch.Error("令牌类型不匹配，需提供刷新令牌")
 		}
 		return nil, errorx.CodeTokenInvalid.Error("无效的刷新令牌")
 	}

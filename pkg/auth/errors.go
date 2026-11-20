@@ -37,7 +37,8 @@ var (
 	// ErrTokenInvalidAudience occurs when the token's aud claim does not match the configured audience.
 	ErrTokenInvalidAudience = errors.Sentinel("token audience is invalid")
 
-	// ErrTokenTypeMismatch occurs when the token type is not "access" (e.g. a refresh token was passed).
+	// ErrTokenTypeMismatch occurs when the token type does not match the expected
+	// type (e.g. a refresh token passed to an access-token verifier).
 	ErrTokenTypeMismatch = errors.Sentinel("token type must be access")
 
 	// ErrTokenClaimsInvalid occurs when required claims (uid, un, jti, sub) are missing or inconsistent.

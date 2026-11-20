@@ -2,10 +2,13 @@ package iam
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -325,4 +328,54 @@ func TestAuthUseCase_LogoutAndRevocation(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, errorx.IsCode(err, errorx.CodeNotImplemented))
 	})
+}
+
+// staticTokenVersionStore is a minimal auth.TokenVersionStore for token-manager tests.
+type staticTokenVersionStore struct{ version uint64 }
+
+func (s staticTokenVersionStore) GetTokenVersion(context.Context, uint64) (uint64, error) {
+	return s.version, nil
+}
+
+// TestTokenManager_VerifyRefreshTokenWithAuthenticator reproduces the production
+// wiring (TokenConfig.Authenticator set by iamserver.New). Before the fix the
+// authenticator rejected every refresh token with "token type must be access",
+// so /auth/refresh always failed and the rotation/replay-detection chain never
+// ran.
+func TestTokenManager_VerifyRefreshTokenWithAuthenticator(t *testing.T) {
+	ctx := context.Background()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	publicKey := &key.PublicKey
+
+	authenticator, err := auth.NewAuthenticator(
+		auth.NewJWTConfig("issuer", "audience", publicKey, jwt.SigningMethodRS256),
+		staticTokenVersionStore{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	tokenMgr, err := NewTokenManager(TokenConfig{
+		Issuer:          "issuer",
+		Audience:        "audience",
+		AccessDuration:  time.Hour,
+		RefreshDuration: 24 * time.Hour,
+		SigningMethod:   jwt.SigningMethodRS256,
+		SigningKey:      key,
+		VerifyKey:       publicKey,
+		Authenticator:   authenticator,
+	})
+	require.NoError(t, err)
+
+	pair, _, err := tokenMgr.IssueTokenPair(ctx, &User{ID: 7, Username: "tester", RoleID: 1}, 0)
+	require.NoError(t, err)
+
+	claims, err := tokenMgr.VerifyToken(ctx, pair.RefreshToken)
+	require.NoError(t, err, "refresh token must be accepted when Authenticator is wired in")
+	assert.Equal(t, auth.TokenTypeRefresh, claims.Type)
+
+	_, err = tokenMgr.VerifyToken(ctx, pair.AccessToken)
+	require.Error(t, err, "access token must not be accepted as a refresh token")
+	assert.True(t, errors.Is(err, auth.ErrTokenTypeMismatch))
 }

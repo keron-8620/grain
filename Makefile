@@ -1,4 +1,4 @@
-.PHONY: build test verify coverage clean docker-build docker-push run dist help version swag
+.PHONY: build test verify coverage clean docker-build docker-push run dev-key dist help version swag
 
 # ===== 项目配置：版本默认来自 Git，发布时可通过 VERSION=x.y.z 覆盖 =====
 BINARY_NAME=grain
@@ -121,6 +121,20 @@ docker-push:  ## 推送 Docker 镜像
 	@echo "推送 Docker 镜像: $(DOCKER_IMAGE):$(DOCKER_TAG)"
 	@podman push $(DOCKER_IMAGE):$(DOCKER_TAG)
 	@echo "Docker 镜像推送完成"
+
+# 仅用于本地开发的 JWT 私钥。文件被 .gitignore 忽略，不得提交或打包。
+DEV_KEY_FILE ?= config/dev-signing-key.pem
+DEV_KEY_BITS ?= 3072
+
+dev-key:  ## 生成本地开发 JWT 私钥（config/dev-signing-key.pem，不入库）
+	@if [ -f "$(DEV_KEY_FILE)" ]; then \
+		echo "已存在 $(DEV_KEY_FILE)，未覆盖；如需轮换请先删除该文件"; \
+	else \
+		mkdir -p "$(dir $(DEV_KEY_FILE))"; \
+		openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:$(DEV_KEY_BITS) -out "$(DEV_KEY_FILE)"; \
+		chmod 600 "$(DEV_KEY_FILE)"; \
+		echo "已生成 $(DEV_KEY_FILE)（$(DEV_KEY_BITS) bits，权限 600）"; \
+	fi
 
 run:  ## 运行应用
 	@echo "运行应用..."

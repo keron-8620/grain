@@ -19,5 +19,18 @@ config/*.db
 logs/
 /data/
 
+# Secrets: never commit private keys or environment files.
+# 私钥/证书/环境变量文件一律不入库；本地开发密钥用 `make dev-key` 生成。
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Generated coverage reports contain full source code.
+html/coverage.html
+
 # 安全审计产物（原始扫描结果与报告），不纳入版本控制
 audit/

@@ -70,7 +70,8 @@ iam:
     access_method: "RS256"
     # 当前访问令牌与刷新令牌使用同一签名算法；如需配置，必须与 access_method 一致。
     refresh_method: "RS256"
-    # 开发用私钥；生产必须替换为由 Secret/文件挂载提供的私钥。
+    # 本地开发密钥由 `make dev-key` 生成（文件已被 .gitignore 忽略，不入库、不打包）。
+    # 生产必须改为 Secret/文件挂载提供的绝对路径；历史开发密钥已被列为泄露密钥，启动时会拒绝。
     private_key: "dev-signing-key.pem"
     # public_key 可选；留空时由私钥推导。
     public_key: ""

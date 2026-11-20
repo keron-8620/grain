@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -622,6 +625,60 @@ func publicKeysEqual(a, b crypto.PublicKey) bool {
 	}
 	return string(ap) == string(bp)
 }
+
+const (
+	// leakedDevSigningKeySHA256 is the SHA-256 of the PKIX public key derived
+	// from the development private key that used to be committed to git
+	// (config/dev-signing-key.pem). That key must be treated as leaked: the
+	// service refuses to start when it detects the same public key.
+	leakedDevSigningKeySHA256 = "9f4d3b75ef25800b65287d64a3582721eccff72affd8e21db5b9cc75db898014"
+	// minJWTPrivateKeyBits rejects weak RSA signing keys.
+	minJWTPrivateKeyBits = 2048
+)
+
+func publicKeyFingerprint(pub crypto.PublicKey) (string, error) {
+	pemBytes, err := cryptoutil.MarshalPublicKeyPKIXPEM(pub)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(pemBytes)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// validatePrivateKeyMaterial enforces the key hygiene rules that used to be
+// documentation-only: a minimum RSA key size, refusal of the leaked
+// development key, and refusal of key files writable by group/other.
+func validatePrivateKeyMaterial(material string, privateKey crypto.PrivateKey, publicKey crypto.PublicKey) error {
+	if rsaKey, ok := privateKey.(*rsa.PrivateKey); ok {
+		bits := 0
+		if rsaKey.N != nil {
+			bits = rsaKey.N.BitLen()
+		}
+		if bits < minJWTPrivateKeyBits {
+			return fmt.Errorf("JWT RSA 私钥长度不足: %d bits（要求至少 %d bits）", bits, minJWTPrivateKeyBits)
+		}
+	}
+
+	fingerprint, err := publicKeyFingerprint(publicKey)
+	if err != nil {
+		return fmt.Errorf("计算 JWT 公钥指纹失败: %w", err)
+	}
+	if fingerprint == leakedDevSigningKeySHA256 {
+		return fmt.Errorf("检测到已泄露的开发 JWT 私钥（公钥指纹 %s）；请生成新密钥并通过 Secret 注入", fingerprint)
+	}
+
+	if !strings.Contains(material, "-----BEGIN") {
+		info, statErr := os.Stat(material)
+		if statErr != nil {
+			return fmt.Errorf("检查 JWT 私钥文件失败: %w", statErr)
+		}
+		if info.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("JWT 私钥文件 %s 对组或其他用户可写（当前 %04o），请执行 chmod 600", material, info.Mode().Perm())
+		}
+	}
+	return nil
+}
+
 func loadJWTKeys(bc *conf.Bootstrap) (crypto.PrivateKey, crypto.PublicKey, string, error) {
 	if bc == nil || bc.IAM == nil {
 		return nil, nil, "", fmt.Errorf("security configuration is required")
@@ -647,6 +704,9 @@ func loadJWTKeys(bc *conf.Bootstrap) (crypto.PrivateKey, crypto.PublicKey, strin
 			return nil, nil, "", fmt.Errorf("configured JWT public key does not match private key")
 		}
 		publicKey = configuredKey
+	}
+	if err := validatePrivateKeyMaterial(material, privateKey, publicKey); err != nil {
+		return nil, nil, "", err
 	}
 	kid := bc.IAM.Token.KeyID
 	if strings.TrimSpace(kid) == "" {

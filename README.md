@@ -84,6 +84,8 @@ curl http://127.0.0.1:8080/.well-known/jwks.json
    状态，进程重启后状态不丢失；数据库仍是吊销基线的权威来源。**Redis 不代表支持多实例。**
 
 4. **限制 CORS 与 Host**，并关闭不需要的 Swagger / pprof / metrics 暴露。
+5. **为探针预留限流额度**：`/livez`、`/readyz`、`/health` 与业务接口共用 IP 限流，
+   请确保 `server.rate.rps`/`burst` 能覆盖 kubelet/LB 探针的 QPS，否则探针会被 429。
 
 ## 权限模型
 

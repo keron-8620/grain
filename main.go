@@ -452,6 +452,14 @@ func NewRouter(
 		_ = r.SetTrustedProxies(nil)
 	}
 
+	// 全局中间件必须在任何路由注册之前注册：gin 在注册路由时快照 handler 链，
+	// 之后再 r.Use 不会作用于已注册路由。否则 /health、/readyz、/swagger、
+	// /metrics、/debug/pprof 与静态资源会绕过 panic 恢复、限流和超时。
+	r.Use(middleware.ErrorMiddleware(logger))
+	r.Use(middleware.TracingMiddleware(logger))
+	r.Use(middleware.IPBasedRateLimiterMiddleware(logger, rate.Limit(bc.Server.Rate.RPS), bc.Server.Rate.Burst))
+	r.Use(middleware.TimeoutMiddleware(logger, bc.Server.Timeout.Request))
+
 	// 配置静态文件处理
 	htmlPath := filepath.Join(conf.HTMLDir, "index.html")
 	r.GET("/", func(c *gin.Context) {
@@ -524,13 +532,9 @@ func NewRouter(
 		diagnostics.GET("/debug/pprof/trace", gin.WrapF(pprof.Trace))
 	}
 
-	// 注册统一异常处理中间件
-	r.Use(middleware.ErrorMiddleware(logger))
-
-	// 注册链路追踪处理中间件
-	r.Use(middleware.TracingMiddleware(logger))
-
-	// 注册跨域请求处理中间件
+	// CORS / HostGuard / Timestamp 只面向浏览器与 API 流量，因此注册在系统探针与
+	// 诊断路由之后：避免 HostGuard 把 kubelet/LB 探针、Prometheus 抓取（Host 为
+	// IP:port）判为非法 Host，同时保证后续注册的业务路由全部获得这些防护。
 	r.Use(middleware.CorsMiddleware(bc.Security.CORS))
 
 	// host请求头防护中间件
@@ -567,12 +571,6 @@ func NewRouter(
 			defaultExpiration,
 		))
 	}
-
-	// IP限流中间件
-	r.Use(middleware.IPBasedRateLimiterMiddleware(logger, rate.Limit(bc.Server.Rate.RPS), bc.Server.Rate.Burst))
-
-	// 注册超时处理中间件
-	r.Use(middleware.TimeoutMiddleware(logger, bc.Server.Timeout.Request))
 
 	// 初始化加载业务模块
 	iamSrv, err := iamserver.InitServer(ctx, r, bc, logger, gormDB, enforcer, serverOptions...)

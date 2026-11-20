@@ -83,8 +83,13 @@ curl http://127.0.0.1:8080/.well-known/jwks.json
    单机部署可以不启用 Redis。启用后用于 token version 热缓存、刷新令牌轮换与 family 吊销
    状态，进程重启后状态不丢失；数据库仍是吊销基线的权威来源。**Redis 不代表支持多实例。**
 
-4. **限制 CORS 与 Host**，并关闭不需要的 Swagger / pprof / metrics 暴露。
-5. **为探针预留限流额度**：`/livez`、`/readyz`、`/health` 与业务接口共用 IP 限流，
+4. **启用生产模式**：以 `config/config.prod.example.yaml` 为基线，设置
+   `server.mode: "prod"` 并显式列明 CORS 来源、开启 HostGuard。prod 模式会在启动时
+   拒绝以下配置：Swagger 开启、未配置反代 TLS、HostGuard 关闭或未配置域名、CORS 含 `*`、
+   限流/超时为 0、私钥使用相对路径。TLS 由反代终止时设置 `behind_tls_proxy: true`，
+   grain 默认只监听 `127.0.0.1`。
+5. **限制 CORS 与 Host**，并关闭不需要的 Swagger / pprof / metrics 暴露。
+6. **为探针预留限流额度**：`/livez`、`/readyz`、`/health` 与业务接口共用 IP 限流，
    请确保 `server.rate.rps`/`burst` 能覆盖 kubelet/LB 探针的 QPS，否则探针会被 429。
 
 ## 权限模型

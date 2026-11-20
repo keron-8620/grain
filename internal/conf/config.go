@@ -2,6 +2,7 @@ package conf
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -109,6 +110,13 @@ func (b *Bootstrap) GetVersion() string {
 	return b.version
 }
 
+// Server modes. Production mode turns the security baseline items that used to
+// be documentation-only into startup errors.
+const (
+	ServerModeDev  = "dev"
+	ServerModeProd = "prod"
+)
+
 func (b *Bootstrap) Validate() error {
 	if b == nil {
 		return fmt.Errorf("bootstrap configuration cannot be nil")
@@ -116,6 +124,17 @@ func (b *Bootstrap) Validate() error {
 	if b.Server == nil {
 		return fmt.Errorf("server configuration is required")
 	}
+
+	mode := strings.ToLower(strings.TrimSpace(b.Server.Mode))
+	switch mode {
+	case "":
+		b.Server.Mode = ServerModeDev
+	case ServerModeDev, ServerModeProd:
+		b.Server.Mode = mode
+	default:
+		return fmt.Errorf("server.mode must be %q or %q, got %q", ServerModeDev, ServerModeProd, b.Server.Mode)
+	}
+
 	if b.Database == nil {
 		return fmt.Errorf("database configuration is required")
 	}
@@ -220,6 +239,48 @@ func (b *Bootstrap) Validate() error {
 		return fmt.Errorf("security.password.strength_level must be between 0 and 3")
 	}
 
+	// CORS: a wildcard origin combined with credentials is never allowed, and
+	// production must list the browser origins explicitly.
+	if b.Security.CORS != nil {
+		for _, origin := range b.Security.CORS.AllowOrigins {
+			if strings.TrimSpace(origin) != "*" {
+				continue
+			}
+			if b.Security.CORS.AllowCredentials {
+				return fmt.Errorf("security.cors.allow_origins cannot contain \"*\" when allow_credentials is true")
+			}
+			if b.Server.Mode == ServerModeProd {
+				return fmt.Errorf("security.cors.allow_origins cannot contain \"*\" when server.mode is prod; list the frontend origins explicitly")
+			}
+		}
+	}
+
+	if b.Server.Mode == ServerModeProd {
+		if b.Server.Swagger {
+			return fmt.Errorf("server.swagger must be false when server.mode is prod")
+		}
+		if !b.Server.SSL.Enable && !b.Server.BehindTLSProxy {
+			return fmt.Errorf("server.mode=prod requires server.ssl.enable=true or server.behind_tls_proxy=true (terminate TLS at a trusted proxy)")
+		}
+		if !b.Security.HostGuard.Enable || len(b.Security.HostGuard.TrustedHosts) == 0 {
+			return fmt.Errorf("server.mode=prod requires security.host_guard.enable=true with a non-empty trusted_hosts list")
+		}
+		if b.Server.Rate.RPS <= 0 {
+			return fmt.Errorf("server.mode=prod requires server.rate.rps > 0")
+		}
+		if b.Server.Timeout.Request <= 0 {
+			return fmt.Errorf("server.mode=prod requires server.timeout.request > 0")
+		}
+		host := strings.TrimSpace(b.Server.Host)
+		if (host == "" || host == "0.0.0.0" || host == "::") && !b.Server.BehindTLSProxy {
+			return fmt.Errorf("server.mode=prod must not bind to %q without server.behind_tls_proxy=true", host)
+		}
+		privateKey := strings.TrimSpace(b.IAM.Token.PrivateKey)
+		if !strings.Contains(privateKey, "-----BEGIN") && !filepath.IsAbs(privateKey) {
+			return fmt.Errorf("server.mode=prod requires security.token.private_key to be an absolute path (inject it from a secret store)")
+		}
+	}
+
 	if b.Log == nil {
 		b.Log = &logx.Options{}
 	}
@@ -251,8 +312,15 @@ type TimeoutConfig struct {
 
 // ServerConfig 服务器配置
 type ServerConfig struct {
-	Host           string          `yaml:"host"`
-	Port           int             `yaml:"port"`
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+	// Mode selects the security baseline: "dev" (default) or "prod".
+	// Production mode refuses to start on insecure defaults (swagger, wildcard
+	// CORS, missing HostGuard, plaintext-only exposure, relative key paths).
+	Mode string `yaml:"mode"`
+	// BehindTLSProxy indicates that TLS is terminated by a trusted reverse proxy
+	// in front of grain; production requires either this or server.ssl.enable.
+	BehindTLSProxy bool            `yaml:"behind_tls_proxy"`
 	SSL            SSLConfig       `yaml:"ssl"`
 	Rate           RateLimitConfig `yaml:"rate"`
 	Timeout        TimeoutConfig   `yaml:"timeout"`

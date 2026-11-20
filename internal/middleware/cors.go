@@ -10,12 +10,16 @@ import (
 )
 
 var (
-	defaultAllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"}
-	defaultAllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Trace-ID", "X-Timestamp", "X-Nonce"}
+	defaultAllowMethods  = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"}
+	defaultAllowHeaders  = []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Trace-ID", "X-Timestamp", "X-Nonce"}
 	defaultExposeHeaders = []string{"X-Trace-ID", "X-Cost-MS", "Retry-After"}
 )
 
-// CorsMiddleware 跨域中间件
+// CorsMiddleware 跨域中间件。
+//
+// 未配置（cfg == nil）时保留历史行为：允许任意来源且不带凭证。
+// 显式配置但 allow_origins 为空时不发送任何 CORS 头（仅同源），避免
+// “留空即放开所有来源”的隐患。
 func CorsMiddleware(cfg *conf.AllowConfig) gin.HandlerFunc {
 	allowOrigins := []string{"*"}
 	allowCredentials := false
@@ -24,9 +28,7 @@ func CorsMiddleware(cfg *conf.AllowConfig) gin.HandlerFunc {
 	exposeHeaders := defaultExposeHeaders
 
 	if cfg != nil {
-		if len(cfg.AllowOrigins) > 0 {
-			allowOrigins = cfg.AllowOrigins
-		}
+		allowOrigins = cfg.AllowOrigins
 		allowCredentials = cfg.AllowCredentials
 		if len(cfg.AllowMethods) > 0 {
 			allowMethods = cfg.AllowMethods
@@ -49,6 +51,14 @@ func CorsMiddleware(cfg *conf.AllowConfig) gin.HandlerFunc {
 			break
 		}
 		specificOrigins[origin] = true
+	}
+
+	// "*" + credentials 是规范禁止且危险的组合（等价于关闭同源策略）。
+	// conf.Validate 会在启动时拒绝该配置；这里再做一次 fail-closed，避免
+	// 直接构造中间件的调用方（测试、未来接入方）复现漏洞。
+	if allowAllOrigins && allowCredentials {
+		allowAllOrigins = false
+		specificOrigins = make(map[string]bool)
 	}
 
 	allowMethodsStr := strings.Join(allowMethods, ", ")

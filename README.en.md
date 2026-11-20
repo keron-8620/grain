@@ -48,7 +48,13 @@ against the config file's directory.
 3. Optionally enable Redis. Redis can hold the token-version hot cache and refresh-token
    rotation/family revocation state so it survives restarts; the database remains the
    authoritative revocation baseline. Redis does not enable multi-instance deployment.
-4. Restrict CORS/hosts and disable Swagger/pprof/metrics exposure when not needed.
+4. Start from `config/config.prod.example.yaml` and set `server.mode: "prod"`. Production mode
+   refuses to start with Swagger enabled, no TLS/proxy, HostGuard disabled or empty, wildcard
+   CORS, zero rate limit/timeout, or a relative signing-key path. Terminate TLS at a reverse
+   proxy (`behind_tls_proxy: true`) and keep grain bound to `127.0.0.1`.
+5. Restrict CORS/hosts and disable Swagger/pprof/metrics exposure when not needed.
+6. Health endpoints share the per-IP rate limit; make sure `server.rate.rps`/`burst` can cover
+   kubelet/LB probe QPS, otherwise probes receive 429.
 
 ## Authorization model
 

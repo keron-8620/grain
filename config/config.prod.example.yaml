@@ -1,0 +1,122 @@
+# grain 生产配置示例（server.mode: prod）
+#
+# 该文件是**示例**，不是可直接运行的配置：请复制到 /etc/grain/config.yaml，
+# 替换域名、数据库 DSN、密钥路径与 CIDR 后再使用。prod 模式会在启动时强制校验：
+#   - server.swagger 必须为 false；
+#   - 必须由反代终止 TLS（behind_tls_proxy: true）或自身开启 ssl；
+#   - security.host_guard 必须开启且 trusted_hosts 非空；
+#   - security.cors.allow_origins 不得包含 "*"，应显式列明前端域名；
+#   - rate.rps 与 timeout.request 必须大于 0；
+#   - security.token.private_key 必须是绝对路径（Secret 挂载），且不得是历史开发密钥。
+#
+# 初始化顺序：-migrate → -exec-sql sql/database.sql → -bootstrap-admin。
+
+server:
+  mode: "prod"
+  # 反代与 grain 同机时只监听回环；容器/旁车模式可改为 0.0.0.0（需保持 behind_tls_proxy: true）
+  host: "127.0.0.1"
+  port: 8080
+  # TLS 由 nginx/caddy/云 LB 终止，grain 只接受其转发流量
+  behind_tls_proxy: true
+  swagger: false
+  enable_metrics: false
+  enable_pprof: false
+  # 只填写真实反代地址/网段，不要使用 0.0.0.0/0；反代与 grain 同机时加入 127.0.0.1/32。
+  trusted_proxies: ["127.0.0.1/32", "10.0.0.0/8"]
+  rate:
+    rps: 50
+    burst: 100
+  timeout:
+    request: 30s
+    shutdown: 10s
+  ssl:
+    enable: false
+    crt_path: ""
+    key_path: ""
+
+database:
+  # 生产建议使用 MySQL/PostgreSQL 并启用 TLS；单机也可继续使用 sqlite。
+  type: sqlite
+  dsn: "grain.db"
+  log_sql: false
+  slow_threshold: 200ms
+  max_idle_conns: 10
+  max_open_conns: 100
+
+redis:
+  # 启用时请配置强口令并只监听 127.0.0.1；跨机部署必须使用 TLS。
+  enable: false
+  addr: "127.0.0.1:6379"
+  username: ""
+  password: ""
+  db: 0
+
+security:
+  cors:
+    allow_origins:
+      - "https://grain.example.com"
+    allow_credentials: false
+  host_guard:
+    enable: true
+    trusted_hosts:
+      - "grain.example.com"
+  timestamp:
+    # 前端实现 X-Timestamp / X-Nonce 后再开启；否则 API 请求会被拒绝。
+    check_timestamp: false
+    tolerance: 300s
+    future_tolerance: 60s
+
+log:
+  level: info
+  format: json
+  enable_stdout: true
+  enable_file: false
+
+iam:
+  token:
+    access_duration: 30m
+    refresh_duration: 24h
+    issuer: "iam.grain.com"
+    audience: "grain-api"
+    access_method: "RS256"
+    refresh_method: "RS256"
+    private_key: "/etc/grain/keys/iam.pem"
+    public_key: ""
+    key_id: ""
+  login:
+    max_failed_attempts: 5
+    lock_duration: 15m
+  password:
+    strength_level: 3
+
+job:
+  max_concurrent_scripts: 10
+  script_repo:
+    enable: false
+    url: ""
+    branch: "main"
+    dir: "storage/script"
+    timeout: 60s
+    author_name: "grain"
+    author_email: "grain@localhost"
+    auth_type: "none"
+    username: ""
+    password: ""
+    ssh_key_path: ""
+    ssh_key_passphrase: ""
+    known_hosts: ""
+    ssh_host_key: ""
+    insecure_skip_tls: false
+
+cmdb:
+  ssh_timeout: 15s
+  ssh_private_key: ""
+  ssh_private_key_passphrase: ""
+  ssh_password: ""
+  public_keys: []
+  winrm:
+    use_tls: true
+    insecure_skip_verify: false
+    ca_cert: ""
+    client_cert: ""
+    client_key: ""

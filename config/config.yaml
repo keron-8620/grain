@@ -1,16 +1,24 @@
-# grain 开发/生产配置模板
+# grain 开发配置模板（server.mode: dev）
 #
-# 该文件可直接用于本地开发。生产环境请务必：
-#   1. 替换 security.token.private_key 为受控 Secret 中注入的私钥路径；
-#   2. 使用 `grain -migrate` 作为独立部署步骤执行数据库迁移；
-#   3. 导入 sql/database.sql 后执行一次 `grain -bootstrap-admin` 生成随机初始口令；
-#   4. 按需启用 redis，用于缓存刷新令牌轮换与吊销状态（本项目不支持多实例）；
-#   5. 限制 cors.allow_origins 并开启 security.host_guard。
+# 该文件可直接用于本地开发。生产请使用 config/config.prod.example.yaml：
+# prod 模式会强制要求反代 TLS、关闭 Swagger、限制 CORS、开启 HostGuard，
+# 并拒绝相对路径的私钥。
+#
+# 本地初始化顺序：
+#   1. make dev-key                  # 生成本地 JWT 私钥（不入库）
+#   2. grain -migrate                # 建表
+#   3. grain -exec-sql sql/database.sql
+#   4. grain -bootstrap-admin        # 生成一次性随机管理员口令
+#   5. grain                         # 启动
 
 server:
-  host: "0.0.0.0"
+  mode: "dev"
+  # 默认只监听回环，配合本机反代；容器/虚拟机直连可改为 0.0.0.0 并自行隔离网络。
+  host: "127.0.0.1"
   port: 8080
-  swagger: true
+  # 本地调试需要 Swagger UI 时改为 true；prod 模式禁止开启。
+  swagger: false
+  behind_tls_proxy: false
   enable_metrics: false
   enable_pprof: false
   trusted_proxies: []
@@ -43,6 +51,7 @@ redis:
 
 security:
   cors:
+    # 仅本地开发使用 "*"；prod 模式会拒绝通配来源，必须显式列明前端域名。
     allow_origins:
       - "*"
     allow_credentials: false

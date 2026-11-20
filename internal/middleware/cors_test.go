@@ -82,9 +82,28 @@ func TestCorsMiddleware(t *testing.T) {
 		assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 	})
 
-	t.Run("allowed origin with credentials echoes origin and sets vary", func(t *testing.T) {
+	t.Run("wildcard origin with credentials is refused", func(t *testing.T) {
 		cfg := &conf.AllowConfig{
 			AllowOrigins:     []string{"*"},
+			AllowCredentials: true,
+			ExposeHeaders:    []string{"X-Custom-Expose"},
+		}
+		r := setupRouter(cfg)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "http://app.example.com")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"),
+			"wildcard + credentials must not reflect the request origin")
+		assert.Empty(t, w.Header().Get("Access-Control-Allow-Credentials"))
+	})
+
+	t.Run("explicit origin with credentials echoes origin and sets vary", func(t *testing.T) {
+		cfg := &conf.AllowConfig{
+			AllowOrigins:     []string{"http://app.example.com"},
 			AllowCredentials: true,
 			ExposeHeaders:    []string{"X-Custom-Expose"},
 		}
@@ -100,5 +119,17 @@ func TestCorsMiddleware(t *testing.T) {
 		assert.Equal(t, "Origin", w.Header().Get("Vary"))
 		assert.Equal(t, "true", w.Header().Get("Access-Control-Allow-Credentials"))
 		assert.Equal(t, "X-Custom-Expose", w.Header().Get("Access-Control-Expose-Headers"))
+	})
+
+	t.Run("explicitly empty allow_origins denies every cross-origin request", func(t *testing.T) {
+		r := setupRouter(&conf.AllowConfig{})
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "http://app.example.com")
+		r.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 	})
 }
